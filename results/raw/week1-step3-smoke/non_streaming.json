@@ -1,0 +1,39 @@
+{
+  "id": "chatcmpl-98cb1d50ecfb4f47",
+  "object": "chat.completion",
+  "created": 1787820120,
+  "model": "Qwen/Qwen3-0.6B",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "<think>\nOkay, the user wants me to reply with the single word \"ready",
+        "refusal": null,
+        "annotations": null,
+        "audio": null,
+        "function_call": null,
+        "reasoning": null
+      },
+      "logprobs": null,
+      "finish_reason": "length",
+      "stop_reason": null,
+      "token_ids": null,
+      "routed_experts": null
+    }
+  ],
+  "service_tier": null,
+  "system_fingerprint": "vllm-0.27.1-nohash",
+  "usage": {
+    "prompt_tokens": 15,
+    "total_tokens": 31,
+    "completion_tokens": 16,
+    "prompt_tokens_details": null
+  },
+  "prompt_logprobs": null,
+  "prompt_token_ids": null,
+  "prompt_text": null,
+  "kv_transfer_params": null,
+  "ec_transfer_params": null,
+  "metrics": null
+}

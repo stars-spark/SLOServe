@@ -1,0 +1,14 @@
+# Rebuild the isolated NVIDIA serving environment with:
+# uv venv --python 3.11.14 --seed .venv-vllm
+# uv pip install --python .venv-vllm/bin/python \
+#   --torch-backend=cu130 -r requirements/vllm-cu130.txt
+#
+# Then, on CPython < 3.12, make the pinned flashinfer importable (see
+# docs/ENVIRONMENT.md, Week 1 step 3):
+# .venv-vllm/bin/python scripts/patch_flashinfer_py311.py
+#
+# The vLLM server is launched via scripts/serve.sh, which sets
+# VLLM_USE_FLASHINFER_SAMPLER=0 to avoid a ninja/nvcc JIT sampler compile.
+
+torch==2.13.0
+vllm==0.27.1
