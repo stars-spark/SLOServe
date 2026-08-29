@@ -180,3 +180,27 @@ real vLLM request, or performance measurement was produced; Week 1 step 7 remain
 
 This completes 7a-3 only. It is pipeline validation with fixture values, not a performance result.
 Week 1 step 7 remains in progress until 7b runs the CLI against a real single-GPU vLLM service.
+
+## 2026-08-29 — Week 1 step 7 (7b) complete — Week 1 done
+
+- Started the pinned single-GPU vLLM server (`scripts/serve.sh`), then ran
+  `sloserve benchmark --config configs/base.yaml` against it end to end.
+- Produced 75 request records (3 repetitions × [5 warmup + 20 formal]) as JSONL fact source plus
+  derived CSV, and a completeness report, all under `results/raw/week1-step7-smoke/`.
+- All 60 formal requests succeeded (0 error/timeout/cancelled/rejected); terminal counts sum to the
+  request count. The completeness report has no unexplained missing values: TTFT/TPOT/end-to-end/
+  queue P50-P95-P99, token throughput, overall and per-class SLO attainment, longest wait, fairness
+  (gap 0.0, Jain 1.0), and concurrently sampled GPU utilization/memory/power (power was readable on
+  this laptop GPU). GPU samples and request timestamps share one monotonic clock.
+- Stopped the server and confirmed no leftover vLLM process, a refused endpoint, and the GPU back to
+  14 MiB used.
+
+This is a low-load pipeline validation only: queue waits are near zero and every request meets its
+SLO by design, so these numbers must NOT be read as a policy-performance result. Observed values are
+reproducible from the saved JSONL, GPU samples, config hash, and metadata. Known gap: the captured
+`env_version` marks vllm/torch as `unavailable` because the CLI runs in the dev `.venv`; the real
+serving versions (vLLM 0.27.1, torch 2.13.0+cu130) are recorded in `docs/ENVIRONMENT.md`.
+
+Week 1 is complete: the single-GPU external FCFS admission/queueing/routing MVP is built and
+validated end to end, with a reproducible, fully-populated raw data pipeline. No policy comparison
+or performance claim has been made.

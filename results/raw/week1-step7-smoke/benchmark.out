@@ -1,0 +1,2 @@
+completeness_report=results/raw/benchmark-requests-completeness.json
+{"cancelled": 0, "error": 0, "formal_requests": 60, "rejected": 0, "scope": "\u4ec5\u7ba1\u7ebf\u9a8c\u8bc1\uff0c\u4e0d\u4f5c\u7b56\u7565\u6027\u80fd\u6bd4\u8f83", "success": 60, "timeout": 0}

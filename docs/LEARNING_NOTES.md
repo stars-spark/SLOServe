@@ -591,3 +591,50 @@ scheduler，也没有扩展到多 GPU、KV cache 或 SLO-aware 调度。
 进入 7b：人工用 `scripts/serve.sh configs/base.yaml` 启动固定版本的单 GPU vLLM，再真实运行
 `sloserve benchmark --config configs/base.yaml`，核对原始 JSONL/CSV、环境字符串和完整性报告中的请求
 及 GPU 字段，并保存失败证据。只有 7b 验收后才能把 Week 1 第 7 步标记完成；smoke 仍不作策略性能比较。
+
+## 2026-08-29 — Week 1 第 7 步（7b）：真实单 GPU 端到端 smoke，Week 1 收官
+
+### 要解决的问题
+
+把 7a 的整套离线机器接到真实 vLLM，用一条命令跑出完整、可复现、带 GPU 指标的原始数据管线，验证
+第 7 步验收：所有字段无无说明缺失。
+
+### 为什么需要
+
+前面所有零件都在假件下验证过，但"能离线跑"不等于"能对真实 vLLM 跑通并采到完整数据"。7b 是第一次
+真上 GPU、第一次让五个时间戳全部来自真实事件、第一次把 GPU 曲线和请求时间线用同一时钟对齐。
+
+### 关键命令与概念
+
+- `scripts/serve.sh configs/base.yaml` 起服务（复用第 3 步的两处 Python 3.11 修复：flashinfer 补丁
+  已幂等在位、`VLLM_USE_FLASHINFER_SAMPLER=0`）。
+- `uv run sloserve benchmark --config configs/base.yaml` 在 dev `.venv` 里当客户端跑，httpx 打
+  `localhost:8000`，并行 nvidia-smi 采样，写 `results/raw/week1-step7-smoke/`。
+- 停服用 `pkill -TERM -f '[.]venv-vllm/bin/vllm'`（方括号防自匹配，第 3 步教训）。
+- 完整性校验：脚本扫描报告，确认没有 `value=null 且 missing_reason=null` 的字段。
+
+### 成功标志
+
+- 75 条记录（3 rep × [5 预热 + 20 正式]），每 rep 25 条；正式 60 条全 success，五类终态计数之和
+  等于总数。
+- 完整性报告字段齐全：TTFT P50/P95/P99 ≈ 0.029/0.035/0.039 s；TPOT P50 ≈ 0.0095 s/token；端到端
+  P50/P95/P99 ≈ 1.23/3.99/4.42 s；排队等待 P99 ≈ 0.0017 s；token 吞吐 ≈ 153.9 tok/s；SLO 达标
+  60/60（两类各 30/30）；公平性 gap 0.0、Jain 1.0；GPU 利用率均值 40.5%/峰 46%、显存峰 6136 MiB、
+  功耗均值 69.8W/峰 77.5W。
+- 记录时间戳单调且与 GPU 样本共享同一单调时钟；停服后无残留进程、端点拒连、GPU 回到 14 MiB。
+
+### 失败与诊断
+
+- 就绪探测一度显示"~1s 就绪",一度怀疑是残留监听。核对 `/v1/models` 返回体、`ss -ltnp` 的
+  pid、GPU 6136 MiB 和 server.log 的 "Application startup complete",确认是本次新启的真实服务——
+  "1s" 只因读前置检查时它已加载完，探测启动时正好已就绪。教训：就绪探测要核对进程/显存/日志，
+  不能只看端口应答。
+
+### 实际结论与下一步
+
+Week 1 收官：单 GPU 外部 FCFS 准入/排队/路由 MVP 已端到端建成并验证,产出可复现、字段齐全的原始
+数据管线。**这是低负载管线验证,不是性能结论**——几乎不排队、SLO 全达标是设计使然。已知缺口:
+`env_version` 的 vllm/torch 标 `unavailable`(CLI 在 dev venv 无法 import 服务环境的包;真值 vLLM
+0.27.1 / torch 2.13.0+cu130 记于 ENVIRONMENT.md),可作为小 follow-up(让 capture_environment 通过
+子进程读 `.venv-vllm`)。下一阶段(Week 2)才进入策略对比:加压、实现 SLO-aware/priority,并在
+相同负载下比较 FCFS 与新策略。

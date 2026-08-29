@@ -108,3 +108,14 @@ GPU 采样，也没有产生性能数据。
 
 验收：一条命令运行 benchmark 并生成带元数据的原始 JSONL/CSV；吞吐量、TTFT、TPOT、
 P50/P95/P99、SLO 达标率、失败/超时、等待/公平性字段及 GPU 指标均不存在无说明的缺失值。
+
+状态（2026-08-29）：已完成。`sloserve benchmark --config configs/base.yaml` 对真实单 GPU
+vLLM（Qwen3-0.6B，commit `c1899de2…`）跑通：3 次重复、每次 5 预热 + 20 正式，共 75 条记录
+落盘（`results/raw/week1-step7-smoke/benchmark-requests.{jsonl,csv}`），正式 60 条全 success、
+0 失败/超时/取消/拒绝。完整性报告每个字段都有值或显式缺失原因，无无说明缺失：TTFT/TPOT/端到端/
+排队 P50-95-99、token 吞吐、总体与分类别 SLO、五类终态计数与总数一致性、最长等待、公平性
+（gap 0.0、Jain 1.0），以及并行 nvidia-smi 采集的 GPU 利用率/显存/功耗（本机功耗可读）。
+GPU 样本与请求时间戳共享同一单调时钟。这只是**低负载管线验证**：几乎不排队、SLO 全达标，
+不得据此比较策略性能。原始证据、GPU 快照与完整性报告见 `results/raw/week1-step7-smoke/`。
+已知缺口：`env_version` 中 vllm/torch 标为 `unavailable`（CLI 在 dev `.venv` 运行，无法 import
+服务环境的包；真实版本 vLLM 0.27.1 / torch 2.13.0+cu130 记于 `docs/ENVIRONMENT.md`）。
