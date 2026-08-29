@@ -698,3 +698,62 @@ benchmark 的 join/schema/报告/采样逻辑。本片没有产生性能数据�
 进入 W2-2：实现 SLO-Aware + aging。设计重点是 cost/slack/waiting time 的归一化、
 `estimated_service_time` 的可解释估计、aging 的防饥饿边界与可控时钟测试；完成后再在同一负载下做
 三策略正确性与性能比较。
+
+## 2026-08-29 — Week 2（W2-2）：SLO-Aware 归一化评分与两级硬 aging
+
+### 要解决的问题
+
+在现有外部准入、排队和路由层的公共 `SchedulingPolicy` 接口后实现 `slo_aware`，并让配置工厂把
+`SchedulerPolicyName.SLO_AWARE` 构造成带现有 `SloAwareConfig` 系数的策略。本片只实现请求排序和
+工厂接线，不修改 admission、benchmark、HTTP、指标、GPU 或 vLLM 内部 token scheduler。
+
+### 为什么需要
+
+W2-1 已验证策略接口和配置切换，但静态类别优先级不能随请求预算、预计计算量、deadline 紧迫程度和
+已等待时间变化。W2-2 需要一个纯函数式、可解释且可确定复现的动态 key，同时必须给持续等待的请求
+一个不受评分权重或后续到达模式影响的优先级提升边界。
+
+### 关键命令或代码
+
+- `SloAwarePolicy` 在构造时保存 `SloAwareConfig` 的 input/output token cost、三项 weight 和
+  `aging_threshold_s`；`priority_key()` 不读取全局配置，也不覆盖基类 `order()`。
+- 对请求先计算 `budget = deadline - arrival`，非正预算用 `_EPSILON = 1e-9` 防止除零；
+  `service_est = max_output_tokens * output_token_cost`，
+  `cost = input_token_cost * input_tokens + output_token_cost * max_output_tokens`，
+  `slack = deadline - now - service_est`，`waiting = now - arrival`。
+- cost、slack、waiting 都除以同一请求 budget。最终
+  `score = cost_weight * cost_norm + slack_weight * slack_norm - waiting_weight * waiting_norm`，
+  分数越小越先 dispatch；每个 scored key 以浮点 `sequence_id` 确定性破同分。
+- 两级硬 aging key 为：等待达到阈值时
+  `(0.0, arrival_time_s, float(sequence_id))`，否则
+  `(1.0, score, float(sequence_id))`。tier 0 是绝对最高优先级，内部按最早 arrival 排序，因此等待上界
+  是 `aging_threshold_s` 加队首服务时间，不依赖 weights、cost 或到达模式；这提供了防饥饿的 bounded-
+  wait liveness 保证，而不是依赖 soft score 最终“碰巧”足够小。
+- 工厂的 SLO-aware 分支改为 `SloAwarePolicy(config.slo_aware)`；FCFS、Static Priority 和最终未知策略
+  错误分支保持不变。
+- 聚焦命令：
+  `UV_CACHE_DIR=/tmp/sloserve-uv-cache uv run pytest tests/test_slo_aware_policy.py tests/test_policy_factory.py -q`。
+
+### 成功标志
+
+- 8 个策略测试分别覆盖 name、手算归一化 score、deadline 紧迫性、cheapness、硬 aging 跨 tier、aged
+  bucket 最老优先、sequence ID 确定性和零预算有限 key；工厂测试确认三种配置均构造正确策略。
+- 聚焦策略与工厂测试为 `11 passed in 0.07s`。
+- 首轮四项全量检查依次通过：`uv lock --check` 解析 20 个 package；Ruff lint 通过；56 个文件符合
+  Ruff 格式；pytest 收集并通过 75 个测试（`75 passed in 0.34s`）。
+
+### 失败与诊断
+
+本片聚焦测试、局部 Ruff 和首轮四项全量检查均一次通过，没有失败输出。所有分数和排序断言都来自
+手算 fixture；没有启动 GPU、网络或真实 vLLM，也没有新增运行或性能比较结果。
+
+### 实际结果
+
+`slo_aware` 已作为外部请求调度策略接入现有配置工厂。其所有分支只依赖请求字段、构造时系数和显式
+`now_s`，保持纯且确定；硬 aging 的 tier 优先级不受评分系数影响。本片没有产生吞吐、延迟或 SLO
+改善数据，不能据此作性能结论。
+
+### 下一步
+
+进入 W2-3，按后续任务范围完成下一项 Week 2 工作；在新的明确验收合同之前不增加负载、不执行策略
+性能比较，也不扩展到多 GPU、KV cache 感知或 vLLM 内部调度。
