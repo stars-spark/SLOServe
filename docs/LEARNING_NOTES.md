@@ -638,3 +638,63 @@ Week 1 收官：单 GPU 外部 FCFS 准入/排队/路由 MVP 已端到端建成�
 0.27.1 / torch 2.13.0+cu130 记于 ENVIRONMENT.md),可作为小 follow-up(让 capture_environment 通过
 子进程读 `.venv-vllm`)。下一阶段(Week 2)才进入策略对比:加压、实现 SLO-aware/priority,并在
 相同负载下比较 FCFS 与新策略。
+
+## 2026-08-29 — Week 2（W2-1）：Static Priority 与策略可切换
+
+### 要解决的问题
+
+在现有单 GPU 外部准入/排队/路由层实现 Static Priority，并让 benchmark 依据
+`config.router.policy` 在 FCFS 与静态优先级之间切换；本片只做纯离线假件验证，不连接 GPU、网络或
+真实 vLLM，也不实现 W2-2 的 SLO-aware 与 aging。
+
+### 为什么需要
+
+Week 1 的 `AdmissionQueue` 已经通过公共 `SchedulingPolicy.order()` 选择下一个等待请求，但
+`run_benchmark()` 没有注入配置对应的策略，因此 CLI 仍只能走队列内部的 FCFS 默认值。先完成简单、
+可解释的静态优先级，可以验证策略接口和配置切换链路，再把动态时间、服务时间估计与公平性问题隔离到
+W2-2。
+
+### 关键命令或代码
+
+- `StaticPriorityPolicy.priority_key()` 返回
+  `(class_rank, arrival_time_s, sequence_id)`：interactive 的 `class_rank=0`，batch 为 `1`；同类请求
+  自然复用 FCFS 的 arrival/sequence 顺序。策略不覆盖基类 `order()`，`now_s` 按 FCFS 风格显式丢弃。
+- `build_policy(config)` 按 `SchedulerPolicyName` 分发：FCFS 构造 `FcfsPolicy`，STATIC_PRIORITY 构造
+  `StaticPriorityPolicy`，SLO_AWARE 明确抛出
+  `NotImplementedError("SLO-aware policy is implemented in W2-2")`。
+- `run_benchmark()` 只有一个接线变化：构造 `AdmissionQueue` 时传入
+  `policy=build_policy(config)`。`configs/base.yaml` 仍为 FCFS，测试通过 `model_copy` 使用类型化枚举
+  切换策略。
+- 聚焦命令：
+  `UV_CACHE_DIR=/tmp/sloserve-uv-cache uv run pytest tests/test_static_priority_policy.py tests/test_policy_factory.py tests/test_benchmark.py -q`。
+
+### 成功标志
+
+- 混合乱序请求先输出全部 interactive，再输出 batch；两类内部都按 arrival time、sequence ID 排序，
+  因此更早到达的 batch 仍排在 interactive 后。
+- 工厂分别返回 FCFS/Static Priority 实例，并对 SLO-aware 给出 W2-2 的明确未实现错误。
+- benchmark 集成假件把一个 batch 保持在唯一并发槽内，使更早到达的 batch 与更晚到达的 interactive
+  同时等待；槽释放后，后端启动顺序为 in-flight batch、interactive、waiting batch。
+- 修正测试配置类型后，10 个聚焦测试通过；相关 6 个文件的 Ruff lint 与 format check 通过。
+- 最终四项检查依次通过：锁文件解析 20 个 package，Ruff lint 无错误，55 个文件符合 Ruff 格式，
+  全量 pytest 收集并通过 67 个测试（`67 passed in 0.33s`）。
+
+### 失败与诊断
+
+- 第一次聚焦运行是 `9 passed, 1 failed`。集成测试用
+  `model_copy(update={"policy": "static_priority"})` 写入裸字符串；Pydantic 的 `model_copy` 不重新
+  校验，导致工厂收到 `str` 而不是 `SchedulerPolicyName`，并抛出 unsupported policy。把更新值改为
+  `SchedulerPolicyName.STATIC_PRIORITY` 后，类型化配置契约恢复，聚焦测试全部通过。该失败没有涉及
+  排序算法或异步队列行为。
+
+### 实际结果
+
+W2-1 的静态优先级排序和从 config 到 benchmark/CLI 的策略切换链路已在纯离线假件下打通。FCFS
+配置继续构造原有 `FcfsPolicy`，没有修改 admission、配置 schema、CLI、vLLM 内部 scheduler 或
+benchmark 的 join/schema/报告/采样逻辑。本片没有产生性能数据，也没有验证真实负载下的收益。
+
+### 下一步
+
+进入 W2-2：实现 SLO-Aware + aging。设计重点是 cost/slack/waiting time 的归一化、
+`estimated_service_time` 的可解释估计、aging 的防饥饿边界与可控时钟测试；完成后再在同一负载下做
+三策略正确性与性能比较。

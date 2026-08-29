@@ -18,6 +18,7 @@ from sloserve.metrics.records import RequestRecord
 from sloserve.metrics.serialization import RequestRecordPaths, write_request_records
 from sloserve.router.admission import AdmissionQueue, AdmissionResult
 from sloserve.router.models import RequestClass, RequestEnvelope
+from sloserve.router.policies.factory import build_policy
 from sloserve.workload.backend import AsyncRequestBackend
 from sloserve.workload.generator import generate_requests
 from sloserve.workload.http_backend import HttpCallTelemetry
@@ -115,6 +116,7 @@ async def run_benchmark(
                 router_config=config.router,
                 backend_config=config.backend,
                 backend=backend,
+                policy=build_policy(config),
                 clock=clock,
                 sleep=sleep,
             ) as queue:

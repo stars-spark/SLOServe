@@ -204,3 +204,20 @@ serving versions (vLLM 0.27.1, torch 2.13.0+cu130) are recorded in `docs/ENVIRON
 Week 1 is complete: the single-GPU external FCFS admission/queueing/routing MVP is built and
 validated end to end, with a reproducible, fully-populated raw data pipeline. No policy comparison
 or performance claim has been made.
+
+## 2026-08-29 — Week 2 W2-1 static priority complete
+
+- Added `StaticPriorityPolicy` behind the common external scheduling interface: interactive
+  requests rank before batch requests, with FCFS arrival/sequence ordering within each class.
+- Added configuration-driven policy construction for FCFS and static priority; SLO-aware remains
+  an explicit W2-2 `NotImplementedError`.
+- Wired only `run_benchmark()` queue construction to inject `build_policy(config)`, so the existing
+  CLI inherits `config.router.policy` switching while the base configuration stays FCFS.
+- Added offline policy, factory, and benchmark integration tests. The integration holds one batch
+  in the sole in-flight slot and confirms a later interactive request starts before an earlier
+  waiting batch when capacity becomes available.
+- Passed 10 focused tests, lockfile validation, Ruff lint and formatting, and all 67 pytest tests.
+
+This slice did not access a GPU, network, or real vLLM, did not modify vLLM's internal scheduler,
+and makes no policy-performance claim. SLO-aware scoring, aging, normalization, and estimated
+service time remain for W2-2.

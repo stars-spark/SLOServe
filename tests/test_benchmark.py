@@ -8,7 +8,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import TracebackType
 
-from sloserve.config import ExperimentConfig, load_config
+import pytest
+
+from sloserve.config import ExperimentConfig, SchedulerPolicyName, load_config
 from sloserve.experiments.benchmark import (
     BenchmarkResult,
     GpuSample,
@@ -16,7 +18,7 @@ from sloserve.experiments.benchmark import (
     run_benchmark,
 )
 from sloserve.metrics import read_request_records_csv, read_request_records_jsonl
-from sloserve.router.models import RequestEnvelope
+from sloserve.router.models import RequestClass, RequestEnvelope
 from sloserve.workload.dispatcher import DispatchStatus
 from sloserve.workload.http_backend import HttpCallTelemetry
 
@@ -82,8 +84,10 @@ class TelemetryFakeBackend:
         self._plans = plans or {}
         self._call_counts: dict[str, int] = {}
         self.telemetry: dict[str, HttpCallTelemetry] = {}
+        self.started_request_ids: list[str] = []
 
     async def send(self, request: RequestEnvelope) -> None:
+        self.started_request_ids.append(request.request_id)
         plan = self._plans.get(request.request_id, BackendPlan())
         call_index = self._call_counts.get(request.request_id, 0)
         self._call_counts[request.request_id] = call_index + 1
@@ -199,6 +203,75 @@ def test_same_seed_and_injected_time_produce_identical_records(tmp_path: Path) -
     second = _run(config)
 
     assert first.records == second.records
+
+
+def test_static_priority_benchmark_admits_later_interactive_before_waiting_batch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config(tmp_path)
+    workload = config.workload.model_copy(
+        update={"total_requests": 3, "warmup_requests": 0, "repetitions": 1}
+    )
+    router = config.router.model_copy(
+        update={
+            "policy": SchedulerPolicyName.STATIC_PRIORITY,
+            "max_in_flight": 1,
+            "queue_capacity": 3,
+        }
+    )
+    config = config.model_copy(update={"workload": workload, "router": router})
+    envelopes = (
+        RequestEnvelope(
+            request_id="batch-in-flight",
+            sequence_id=0,
+            request_class=RequestClass.BATCH,
+            arrival_time_s=0.0,
+            input_tokens=512,
+            max_output_tokens=128,
+            deadline_time_s=10.0,
+        ),
+        RequestEnvelope(
+            request_id="batch-waiting",
+            sequence_id=1,
+            request_class=RequestClass.BATCH,
+            arrival_time_s=1.0,
+            input_tokens=512,
+            max_output_tokens=128,
+            deadline_time_s=11.0,
+        ),
+        RequestEnvelope(
+            request_id="interactive-waiting",
+            sequence_id=2,
+            request_class=RequestClass.INTERACTIVE,
+            arrival_time_s=2.0,
+            input_tokens=64,
+            max_output_tokens=32,
+            deadline_time_s=12.0,
+        ),
+    )
+    monkeypatch.setattr(
+        "sloserve.experiments.benchmark.generate_requests", lambda workload_config: envelopes
+    )
+    deterministic_time = DeterministicTime()
+    backend = TelemetryFakeBackend(deterministic_time)
+
+    result = asyncio.run(
+        run_benchmark(
+            config=config,
+            backend=backend,
+            env_version="offline-test-placeholder",
+            clock=deterministic_time.clock,
+            sleep=deterministic_time.sleep,
+        )
+    )
+
+    assert [record.status for record in result.records] == [DispatchStatus.SUCCESS] * 3
+    assert backend.started_request_ids == [
+        "batch-in-flight",
+        "interactive-waiting",
+        "batch-waiting",
+    ]
 
 
 def test_gpu_report_marks_all_missing_power_explicitly() -> None:
