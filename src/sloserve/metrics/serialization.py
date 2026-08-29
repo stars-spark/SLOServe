@@ -52,6 +52,7 @@ def _record_from_mapping(data: Mapping[str, Any]) -> RequestRecord:
         extra = sorted(set(data) - set(_FIELD_NAMES))
         raise ValueError(f"request record fields differ: missing={missing}, extra={extra}")
 
+    dispatch_raw = data["dispatch_time_s"]
     first_token_raw = data["first_token_time_s"]
     error_type_raw = data["error_type"]
     return RequestRecord(
@@ -60,7 +61,7 @@ def _record_from_mapping(data: Mapping[str, Any]) -> RequestRecord:
         request_class=RequestClass(data["request_class"]),
         arrival_time_s=float(data["arrival_time_s"]),
         enqueue_time_s=float(data["enqueue_time_s"]),
-        dispatch_time_s=float(data["dispatch_time_s"]),
+        dispatch_time_s=None if dispatch_raw in (None, "") else float(dispatch_raw),
         first_token_time_s=None if first_token_raw in (None, "") else float(first_token_raw),
         completion_time_s=float(data["completion_time_s"]),
         input_tokens=int(data["input_tokens"]),

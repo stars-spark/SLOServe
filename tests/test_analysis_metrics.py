@@ -53,7 +53,7 @@ def _record(
     status: DispatchStatus,
     *,
     arrival: float,
-    dispatch: float,
+    dispatch: float | None,
     first_token: float | None,
     completion: float,
     output_tokens: int,
@@ -155,6 +155,15 @@ def test_hand_calculated_metrics_can_be_recomputed_from_jsonl(tmp_path: Path) ->
     assert result.error_count == 1
     assert result.timeout_count == 1
     assert result.cancelled_count == 1
+    assert result.rejected_count == 0
+    assert (
+        result.success_count
+        + result.error_count
+        + result.timeout_count
+        + result.cancelled_count
+        + result.rejected_count
+        == result.request_count
+    )
     assert result.ttft_s.p50 == pytest.approx(1.2)
     assert result.ttft_s.p95 == pytest.approx(1.5)
     assert result.ttft_s.p99 == pytest.approx(1.5)
@@ -261,3 +270,76 @@ def test_zero_wall_clock_window_has_undefined_throughput() -> None:
     assert result.wall_clock_window_s == 0.0
     assert result.token_throughput_per_s is None
     assert result.tpot_s == Percentiles(0.0, 0.0, 0.0)
+
+
+def test_fairness_ignores_absent_request_classes() -> None:
+    records = (
+        _record(
+            0,
+            RequestClass.INTERACTIVE,
+            DispatchStatus.SUCCESS,
+            arrival=0.0,
+            dispatch=0.1,
+            first_token=0.5,
+            completion=2.0,
+            output_tokens=3,
+        ),
+        _record(
+            1,
+            RequestClass.INTERACTIVE,
+            DispatchStatus.ERROR,
+            arrival=1.0,
+            dispatch=1.1,
+            first_token=None,
+            completion=2.0,
+            output_tokens=0,
+        ),
+    )
+
+    result = calculate_metrics(records, _workload())
+
+    # Only the class that actually appears is reported and scored for fairness; the absent
+    # BATCH class must not be counted as 0.0 attainment and drag Jain/gap toward "unfair".
+    assert set(result.slo_by_class) == {RequestClass.INTERACTIVE}
+    assert result.slo_by_class[RequestClass.INTERACTIVE].rate == pytest.approx(0.5)
+    assert result.slo_attainment_gap == 0.0
+    assert result.jain_fairness_index == pytest.approx(1.0)
+
+
+def test_rejected_count_and_queue_wait_exclude_undispatched_records() -> None:
+    records = (
+        _record(
+            0,
+            RequestClass.INTERACTIVE,
+            DispatchStatus.SUCCESS,
+            arrival=0.0,
+            dispatch=0.25,
+            first_token=0.5,
+            completion=1.0,
+            output_tokens=2,
+        ),
+        _record(
+            1,
+            RequestClass.BATCH,
+            DispatchStatus.REJECTED,
+            arrival=1.0,
+            dispatch=None,
+            first_token=None,
+            completion=10.0,
+            output_tokens=0,
+        ),
+    )
+
+    result = calculate_metrics(records, _workload())
+
+    assert result.rejected_count == 1
+    assert result.queue_wait_s == Percentiles(0.25, 0.25, 0.25)
+    assert result.longest_queue_wait_s == 0.25
+    assert (
+        result.success_count
+        + result.error_count
+        + result.timeout_count
+        + result.cancelled_count
+        + result.rejected_count
+        == result.request_count
+    )

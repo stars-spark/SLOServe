@@ -56,7 +56,7 @@ def test_request_record_builds_directly_from_envelope() -> None:
     record = RequestRecord.from_envelope(
         envelope,
         enqueue_time_s=3.1,
-        dispatch_time_s=3.2,
+        dispatch_time_s=None,
         first_token_time_s=None,
         completion_time_s=4.0,
         output_tokens=0,
@@ -74,6 +74,7 @@ def test_request_record_builds_directly_from_envelope() -> None:
     assert record.arrival_time_s == envelope.arrival_time_s
     assert record.input_tokens == envelope.input_tokens
     assert record.status is DispatchStatus.TIMEOUT
+    assert record.dispatch_time_s is None
 
 
 def test_jsonl_and_csv_round_trip_every_field(tmp_path: Path) -> None:
@@ -88,6 +89,34 @@ def test_jsonl_and_csv_round_trip_every_field(tmp_path: Path) -> None:
     assert csv_path.read_text(encoding="utf-8").splitlines()[0].split(",") == [
         field.name for field in fields(RequestRecord)
     ]
+
+
+def test_undispatched_rejected_record_round_trips_jsonl_and_csv(tmp_path: Path) -> None:
+    rejected = RequestRecord(
+        request_id="request-rejected",
+        sequence_id=2,
+        request_class=RequestClass.BATCH,
+        arrival_time_s=2.0,
+        enqueue_time_s=2.1,
+        dispatch_time_s=None,
+        first_token_time_s=None,
+        completion_time_s=2.2,
+        input_tokens=16,
+        output_tokens=0,
+        status=DispatchStatus.REJECTED,
+        error_type="QueueFull",
+        policy_name=SchedulerPolicyName.FCFS,
+        config_hash="b" * 64,
+        repetition_index=1,
+        env_version="test-environment-placeholder",
+    )
+
+    jsonl_path = write_request_records_jsonl(tmp_path / "rejected.jsonl", (rejected,))
+    csv_path = write_request_records_csv(tmp_path / "rejected.csv", (rejected,))
+
+    assert read_request_records_jsonl(jsonl_path) == (rejected,)
+    assert read_request_records_csv(csv_path) == (rejected,)
+    assert ",," in csv_path.read_text(encoding="utf-8")
 
 
 def test_metrics_config_controls_output_directory_and_formats(tmp_path: Path) -> None:

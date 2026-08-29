@@ -140,3 +140,43 @@ the next integration boundary.
 This is a functional queue/admission validation only. It is not connected to real HTTP/vLLM,
 `RequestRecord`, first-token events, analysis rejection counts, or GPU sampling, and it contains no
 service-performance measurements. Week 1 step 7 is the next integration boundary.
+
+## 2026-08-28 — Week 1 step 7a-1 HTTP backend complete
+
+- Added an `httpx` OpenAI-compatible streaming backend with request-keyed first-token, token-count,
+  status, finish-reason, and error telemetry. Four `MockTransport` tests validate SSE success,
+  usage fallback, HTTP errors, and unchanged `AdmissionQueue` integration entirely offline.
+
+This is only the HTTP backend component of step 7. No benchmark runner, GPU sampling, completeness
+report, real vLLM request, or performance measurement was run; Week 1 step 7 remains in progress.
+
+## 2026-08-28 — Week 1 step 7a-2 offline benchmark pipeline complete
+
+- Extended request facts and serialization for undispatched terminal records, added rejected
+  analysis counts, and excluded undispatched records from queue-wait calculations.
+- Added an injectable benchmark runner that schedules open-loop arrivals through the external
+  admission queue, joins telemetry before request IDs repeat, persists warmup and formal facts,
+  calculates formal-only metrics, and writes a structured completeness report.
+- Pure offline tests cover two repetitions, deterministic replay, warmup exclusion, a persisted
+  rejected request, JSONL/CSV round trips, and explicit missing reasons for unsampled GPU fields.
+- Passed 14 focused tests, lockfile validation, Ruff lint and format checks, and all 54 tests.
+
+This remains pipeline validation only. No GPU sample, real environment metadata, CLI benchmark,
+real vLLM request, or performance measurement was produced; Week 1 step 7 remains in progress.
+
+## 2026-08-29 — Week 1 step 7a-3 offline integration complete
+
+- Added an injectable, concurrent single-GPU `nvidia-smi` sampler with shared-clock timestamps,
+  clean task cancellation, skipped failed ticks, and explicit missing power rather than fabricated
+  zeroes.
+- Added deterministic environment metadata capture with injected readers and explicit
+  `unavailable` markers, plus a no-I/O CLI assembly factory and `sloserve benchmark --config` for
+  an already-running vLLM server.
+- Limited benchmark runner changes to nullable GPU power, correct missing/partial power reporting,
+  and one sampler context spanning all repetitions; sampler samples take precedence over direct
+  injected samples.
+- Added fully offline fake-based GPU, metadata, benchmark, and CLI coverage. The focused 12 tests
+  and the first full run of 61 tests passed without invoking real GPU, vLLM, or network resources.
+
+This completes 7a-3 only. It is pipeline validation with fixture values, not a performance result.
+Week 1 step 7 remains in progress until 7b runs the CLI against a real single-GPU vLLM service.

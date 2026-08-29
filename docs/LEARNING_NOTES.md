@@ -367,3 +367,227 @@ Week 1 第 6 步的纯内存外部准入边界已经可执行。`DispatchStatus`
 `RequestRecord` 与 first-token 事件，补充 `REJECTED` 的分析口径和运行环境元数据，再以低请求量、
 固定种子、预热和至少 3 次重复验证完整管线，同时采集 GPU 指标。该 smoke 仍只验证管线，不用于策略
 性能比较。
+
+## 2026-08-28 — 清尾：公平性只对出现过的类别计算
+
+### 要解决的问题
+
+第 5 步的公平性把 `interactive` 与 `batch` 两类都固定计入，空类别（该轮没有请求）被当成 `0.0`
+达标率参与 Jain 指数与差距计算。
+
+### 为什么需要
+
+“该类没有请求”和“该类 0% 达标”是两回事。前者是**无观测**，后者是**实测的坏结果**。把无观测
+按 0% 计，会让纯单类负载（例如全 interactive）虚报成“极不公平”（batch=0%、gap 拉满、Jain 被拉低），
+误导后续 FCFS vs SLO-aware 的对比。
+
+### 关键改动与概念
+
+- `calculate_metrics` 先取 `present_classes = {r.request_class for r in records}`，公平性与分类别
+  报告只覆盖出现过的类别，按 `RequestClass` 顺序保证确定性。
+- Jain 的 `n` 改为**出现过的类别数**（0/1/2）；`slo_attainment_gap` 在无类别时约定为 `0.0`。
+- 语义边界写进 `docs/METRICS.md`：空类别不进公平性，也不出现在分类别报告，须结合 `request_count`
+  按“无观测”解读。
+
+### 成功标志
+
+- 新增 `test_fairness_ignores_absent_request_classes`：全 interactive 数据只报告 interactive，
+  达标率 0.5、gap 0.0、Jain 1.0；`slo_by_class` 不含 batch 键。
+- 既有手算样例（两类都在）、全失败、空输入用例行为不变。6 个 analysis 聚焦测试、全量 46 个测试、
+  锁文件与 Ruff lint/format 均通过。
+
+### 实际结论与下一步
+
+这是一处指标**定义**修正，不涉及真实数据或性能结论。`REJECTED` 接入 analysis 计数器需要先把
+`RequestRecord` 的 dispatch/first-token 时间戳改为可选（被拒请求从未 dispatch），该 schema 改动
+与真实记录接线一起放到 Week 1 第 7 步。
+
+## 2026-08-28 — Week 1 第 7 步（7a-1）：真实 httpx 流式后端
+
+### 要解决的问题
+
+在不连接真实网络、vLLM 或 GPU 的条件下，实现现有 `AsyncRequestBackend` 协议的真实 HTTP 流式
+后端，并验证它可以被外部 `AdmissionQueue` 直接驱动。后端还需暴露首 token、输出 token 数和 HTTP
+结果，使后续运行器能按 `request_id` 与 `AdmissionResult` 合并，而不修改现有协议或准入队列。
+
+### 为什么需要
+
+第 6 步只用纯内存 `FakeBackend` 验证了外部准入语义。第 7 步端到端 benchmark 若同时引入 HTTP、
+运行器、GPU 采样和结果写入，故障边界过大；先把 OpenAI-compatible SSE 请求与解析隔离成可离线
+验证的零件，后续才能分别判断错误来自网络流、准入生命周期还是记录管线。
+
+### 关键命令或代码
+
+- `HttpStreamingBackend` 接收 `BackendConfig`、调用方拥有的 `httpx.AsyncClient` 和可注入单调时钟；
+  POST 地址由 `backend.base_url` 组成，model 与 HTTPX 网络阶段 timeout 也来自配置。
+- 请求固定使用 `temperature=0`、常量提示词、`stream=true` 与
+  `stream_options={"include_usage": true}`；精确 input-token 提示造型留给 7a-2 运行器。
+- SSE 只消费 `data: ` 行并在 `[DONE]` 结束。首个非空 content delta 用注入时钟记一次；最终
+  `usage.completion_tokens` 优先作为输出 token 数。缺少 usage 时，回退为非空 content delta 个数；
+  这是 chunk 计数口径，不是 tokenizer 精确 token 数。
+- `telemetry: dict[str, HttpCallTelemetry]` 以 request ID 为键，保存 `first_token_time_s`、
+  `output_tokens`、`http_status`、`finish_reason` 和 `error`。非 2xx 响应先读完再抛出。
+- HTTPX timeout 限制连接、读、写和连接池等网络阶段；`AdmissionQueue` 仍负责 enqueue 到终态的总
+  timeout 并取消 backend task。后端不捕获 `CancelledError`，流式上下文负责关闭响应后继续向上传播。
+- 聚焦测试命令：
+  `UV_CACHE_DIR=/tmp/sloserve-uv-cache uv run pytest tests/test_http_backend.py -q`。
+
+### 成功标志
+
+- 4 个 `httpx.MockTransport` 离线测试覆盖带 usage 的成功流、无 usage 回退、HTTP 500，以及
+  `AdmissionQueue.submit` 成功后按 request ID 读取首 token 遥测；测试没有访问真实网络或 GPU。
+- 聚焦测试最终为 `4 passed in 0.09s`；锁文件解析 20 个 package，Ruff lint 通过，45 个文件通过
+  格式检查，全量 50 个 pytest 测试通过。
+
+### 失败与诊断
+
+- 首次局部格式检查指出新增的两个文件不符合 Ruff 的机械折叠格式；运行 Ruff formatter 后重测通过。
+- 收紧 usage 优先的最终归并后，格式检查再次要求折叠条件表达式；只格式化新增后端文件后，聚焦测试
+  再次通过。没有观察到实现或测试逻辑失败。
+
+### 实际结果
+
+真实的 httpx 流式后端零件已实现，并在纯离线环境验证了请求构造、SSE 解析、HTTP 错误和现有准入
+协议集成。共享注入时钟让 AdmissionQueue 生命周期时间与后端 first-token 时间处于同一基准。该结果
+只证明功能边界，不包含真实 vLLM 兼容性、GPU 状态或任何性能数值。
+
+### 下一步
+
+实现 7a-2 benchmark 运行器：把 `AdmissionResult` 与 HTTP 遥测合并为请求记录，补齐拒绝记录口径、
+精确 input-token 提示造型、环境元数据、GPU 采样和完整性报告；随后才在 7b 用真实单 GPU vLLM 做
+低请求量、预热、固定种子和至少三次重复的端到端 smoke。
+
+## 2026-08-28 — Week 1 第 7 步（7a-2）：离线 benchmark 运行器与完整性报告
+
+### 要解决的问题
+
+在不连接真实网络、vLLM 或 GPU 的条件下，把确定性负载生成、开环到达、外部 `AdmissionQueue`、
+可注入后端遥测、请求事实记录、正式请求指标和完整性报告串成一个可重复运行的 benchmark 管线；同时
+让原始 schema 忠实保存 rejected、排队中 timeout/cancelled 这类从未 dispatch 的终态。
+
+### 为什么需要
+
+第 7a-1 步只验证了单次 HTTP 流调用。若 benchmark 运行器把相对 arrival 当作真实单调时间、串行等待
+每个 `submit()` 完成，或跨 repetition 后才按重复 request ID 读取 telemetry，就会分别造成时间线
+不一致、把开环到达退化为闭环、以及遥测被覆盖。未 dispatch 记录若伪造 dispatch 时间，还会污染等待
+指标和终态计数。
+
+### 关键命令或代码
+
+- `RequestRecord.dispatch_time_s` 改为可选；无 dispatch 时 first token 必须为空、status 不得为
+  success，completion 不得早于 enqueue；有 dispatch 时继续校验 enqueue → dispatch → first token
+  → completion。success 仍要求 dispatch、first token 和正 output token 数。
+- JSONL 保留 `null`，CSV 以空串表示可选 dispatch/first token；两种格式都由现有序列化入口读回。
+- `calculate_metrics()` 跳过未 dispatch 记录的排队等待，新增 `rejected_count`，并显式检查五种终态
+  计数之和等于请求总数。
+- `run_benchmark()` 每轮重新调用 `generate_requests()`，把相对时间平移到该轮注入 clock 的起点；预先
+  创建所有 arrival task，各自在目标时刻调用即时 `AdmissionQueue.submit()`，因此一个提交等待终态时
+  不会阻塞后续到达。
+- 每轮全部 `AdmissionResult` 完成后、下一轮开始前，立即按 sequence/request ID 与
+  `backend.telemetry` 合并。未 dispatch 记录不读取 telemetry，避免误取上一轮同名 request 的值。
+- 全部 warmup 与正式记录共同写 JSONL/CSV；只用 `sequence_id >= warmup_requests` 的正式记录调用
+  `calculate_metrics()`。完整性 JSON 为每个要求字段保存 value 或 missing_reason，无 GPU 样本时对
+  利用率、显存、功耗写明“未采集（无采样器，留待 7a-3/7b）”。
+- 聚焦测试：
+  `UV_CACHE_DIR=/tmp/sloserve-uv-cache uv run pytest tests/test_metrics_records.py tests/test_analysis_metrics.py tests/test_benchmark.py -q`。
+- 完整检查依次为 `uv lock --check`、`uv run ruff check .`、`uv run ruff format --check .`、
+  `uv run pytest`，均使用 `/tmp/sloserve-uv-cache`。
+
+### 成功标志
+
+- schema/analysis/benchmark 的 14 个聚焦测试通过；两轮、每轮 1 个 warmup + 2 个正式请求共 6 条事实
+  记录，JSONL/CSV 逐字段读回相等，repetition index 为 `0,0,0,1,1,1`。
+- 离线假件用唯一 in-flight 槽和一个 waiting 槽确定性地产生每轮一条正式 rejected 记录；正式指标只
+  看到 4 条记录，得到 2 个 success、2 个 rejected，warmup 仍保留在原始文件中。
+- 同配置、同 seed、重置后的注入 clock/backend 连续运行两次，内存中的全部记录逐字段相等。
+- 完整性报告逐项满足 value/missing_reason 二选一，包含正式请求终态计数一致性检查、总体/分类别 SLO、
+  延迟分位数、吞吐、最长等待、公平性，以及三个显式缺失的 GPU 字段，并写明“仅管线验证，不作策略
+  性能比较”。
+- 锁文件解析 20 个 package，Ruff lint 通过，47 个文件通过格式检查，全量 54 个 pytest 测试通过。
+
+### 失败与诊断
+
+- 第一次局部 Ruff lint 把报告要求的中文全角标点判为 RUF001，同时发现一处超长行。保留规范要求的
+  原文并对两条常量和对应断言做精确 `noqa`，拆分超长行后 lint 通过。
+- 第一次局部 format check 指出运行器和测试的三处机械折叠差异；只对相关文件运行 Ruff formatter，
+  随后聚焦与全量格式检查通过。没有发生功能测试失败，也没有访问网络或 GPU。
+
+### 实际结果
+
+Week 1 第 7 步 7a-2 的纯离线管线已完成。结果只证明负载、到达、外部准入、遥测 join、原始落盘、
+正式指标与完整性报告之间的功能接线；测试数值是确定性假件数据，不是服务性能结果。GPU 未采集，
+`env_version` 使用调用方注入的占位字符串，HTTP 后端仍使用固定短提示而未按 `input_tokens` 精确造型，
+也未连接真实 vLLM 或新增 CLI。
+
+### 下一步
+
+进入 7a-3：增加 GPU 样本采集、真实运行环境/版本元数据采集和 `benchmark` CLI 子命令，同时保持本片
+运行器的注入边界与原始事实口径。完成这些离线/接线能力后，7b 才在真实单 GPU vLLM 上执行低请求量
+端到端 smoke；在 7b 之前不把 Week 1 第 7 步标记为完成，也不作策略性能比较。
+
+## 2026-08-29 — Week 1 第 7 步（7a-3）：GPU 采样、环境元数据与 benchmark CLI
+
+### 要解决的问题
+
+在不连接真实 GPU、vLLM 或网络的开发环境中，补齐端到端 smoke 所需的最后一组接线能力：与请求并行
+运行的单 GPU 采样器、明确缺失值的环境元数据，以及把真实 HTTP 流后端、采样器和 benchmark 运行器
+组装起来的 CLI。真实 GPU 端到端运行仍留给 7b 人工执行。
+
+### 为什么需要
+
+7a-2 已能保存请求事实和完整性报告，但 GPU 字段必然缺失、`env_version` 仍由测试占位符注入，也没有
+一条用户命令连接已经运行的 vLLM。若 GPU 样本使用另一时间基准，或功耗不支持时被填成 0，完整性报告
+会产生不可审计的假证据；若 CLI 工厂在构造阶段就发请求，离线接线也无法独立测试。
+
+### 关键命令或代码
+
+- `NvidiaSmiSampler` 是异步 context manager；进入时创建命名后台 task，每 tick 经可注入 `reader`
+  读取 utilization、memory、power，使用调用方共享的 monotonic `clock` 记样本时间，退出时取消并等待
+  task。reader、utilization 或 memory 解析失败会跳过该 tick；不会追加 0 或其他无效占位值。
+- 默认 GPU reader 使用标准库 `asyncio.create_subprocess_exec` 执行单 GPU MVP 的
+  `nvidia-smi --query-gpu=utilization.gpu,memory.used,power.draw --format=csv,noheader,nounits`。
+  power 为 `[N/A]`、非数字或非有限值时保留为 `None`。
+- `run_benchmark()` 只增加采样器外层 context 编排；一个 sampler 覆盖全部 repetition，退出后才读取
+  它的不可变 samples 快照。保留 `gpu_samples` 直接注入；两者同时提供时 sampler 的实采样本优先。
+- GPU 报告对部分缺失 power 只聚合非 `None` 值；全部缺失时写
+  `missing_reason="device did not report power"`，utilization 和 memory 仍正常报告。
+- `capture_environment()` 固定字段顺序输出 Python、driver、model revision、config hash、vLLM 和 torch
+  版本。driver 默认调用 `nvidia-smi`，包版本默认查安装元数据；reader 抛错或返回空串统一写
+  `unavailable`，不猜测版本。
+- `build_benchmark_runtime()` 只从 config 构造 `httpx.AsyncClient`、`HttpStreamingBackend` 和
+  `NvidiaSmiSampler`，并把同一个 `time.monotonic` 传给后端、sampler 和 runner；构造阶段不进入 client、
+  不启动 sampler、不发网络。`sloserve benchmark --config <path>` 只在实际执行时进入 client 并运行。
+- 聚焦测试命令为
+  `UV_CACHE_DIR=/tmp/sloserve-uv-cache uv run pytest tests/test_gpu.py tests/test_metadata.py tests/test_benchmark.py tests/test_cli.py -q`。
+
+### 成功标志
+
+- 罐装 GPU 行 `45, 6136, 60.50` 与 `12, 6100, [N/A]` 产生使用注入 clock 的两个样本，退出 context 后
+  没有 `sloserve-gpu-sampler` 悬挂 task；reader 首 tick 抛错后下一 tick 仍能采样。
+- 注入 metadata readers 后字段顺序和值确定，vLLM/torch 不可读均显式为 `unavailable`。
+- 假 sampler 跑完整个 benchmark 后，完整性报告有 utilization/memory 值，power 只聚合有效样本；同时
+  注入直接 `gpu_samples` 时确认 sampler 优先。
+- CLI parser 识别 `benchmark --config`，工厂测试验证 base URL、timeout、采样间隔和共享 clock，
+  `MockTransport` handler 从未被调用。
+- 4 组聚焦测试共 `12 passed in 0.15s`；首轮全量 pytest 为 `61 passed in 0.32s`。
+
+### 失败与诊断
+
+- 首次局部 Ruff lint 报告 sampler 清理可用 `contextlib.suppress(CancelledError)` 表达，并指出测试 import
+  分组不标准；按建议调整后 lint 通过，清理语义不变。
+- 首次全量 format check 只指出 benchmark arrival task 的长 `name` 参数换行不符合 formatter；按其
+  精确建议换行。这是机械格式问题，不涉及运行逻辑。
+- 测试全过程都由 reader、clock、sleep、sampler 与 `httpx.MockTransport` 假件驱动，没有执行默认
+  `nvidia-smi` reader、真实 GPU、真实 vLLM 或网络请求。
+
+### 实际结果
+
+7a-3 的离线实现与接线测试完成。它证明 sampler 生命周期、缺失功耗语义、环境字段缺失纪律以及 CLI
+构造边界可工作；所有数值均来自测试 fixture，不是实测 GPU 或服务性能结果。本片没有修改 vLLM 内部
+scheduler，也没有扩展到多 GPU、KV cache 或 SLO-aware 调度。
+
+### 下一步
+
+进入 7b：人工用 `scripts/serve.sh configs/base.yaml` 启动固定版本的单 GPU vLLM，再真实运行
+`sloserve benchmark --config configs/base.yaml`，核对原始 JSONL/CSV、环境字符串和完整性报告中的请求
+及 GPU 字段，并保存失败证据。只有 7b 验收后才能把 Week 1 第 7 步标记完成；smoke 仍不作策略性能比较。

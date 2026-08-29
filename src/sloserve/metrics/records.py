@@ -22,7 +22,7 @@ class RequestRecord:
     request_class: RequestClass
     arrival_time_s: float
     enqueue_time_s: float
-    dispatch_time_s: float
+    dispatch_time_s: float | None
     first_token_time_s: float | None
     completion_time_s: float
     input_tokens: int
@@ -53,32 +53,39 @@ class RequestRecord:
         if self.error_type == "":
             raise ValueError("error_type must be null or a non-empty string")
 
-        timestamps = (
-            self.arrival_time_s,
-            self.enqueue_time_s,
-            self.dispatch_time_s,
-            self.completion_time_s,
-        )
+        timestamps = (self.arrival_time_s, self.enqueue_time_s, self.completion_time_s)
         if not all(math.isfinite(timestamp) for timestamp in timestamps):
             raise ValueError("timestamps must be finite")
         if any(timestamp < 0 for timestamp in timestamps):
             raise ValueError("timestamps must be non-negative")
+        if self.dispatch_time_s is not None and not math.isfinite(self.dispatch_time_s):
+            raise ValueError("dispatch_time_s must be finite when present")
         if self.first_token_time_s is not None and not math.isfinite(self.first_token_time_s):
             raise ValueError("first_token_time_s must be finite when present")
         if self.enqueue_time_s < self.arrival_time_s:
             raise ValueError("enqueue_time_s must not precede arrival_time_s")
-        if self.dispatch_time_s < self.enqueue_time_s:
-            raise ValueError("dispatch_time_s must not precede enqueue_time_s")
-        if self.completion_time_s < self.dispatch_time_s:
-            raise ValueError("completion_time_s must not precede dispatch_time_s")
-        if self.first_token_time_s is not None:
-            if self.first_token_time_s < self.dispatch_time_s:
-                raise ValueError("first_token_time_s must not precede dispatch_time_s")
-            if self.completion_time_s < self.first_token_time_s:
-                raise ValueError("completion_time_s must not precede first_token_time_s")
-            if self.output_tokens < 1:
-                raise ValueError("a first token requires output_tokens to be positive")
+        if self.dispatch_time_s is None:
+            if self.first_token_time_s is not None:
+                raise ValueError("records without dispatch cannot have first_token_time_s")
+            if self.status is DispatchStatus.SUCCESS:
+                raise ValueError("success records require dispatch_time_s")
+            if self.completion_time_s < self.enqueue_time_s:
+                raise ValueError("completion_time_s must not precede enqueue_time_s")
+        else:
+            if self.dispatch_time_s < self.enqueue_time_s:
+                raise ValueError("dispatch_time_s must not precede enqueue_time_s")
+            if self.completion_time_s < self.dispatch_time_s:
+                raise ValueError("completion_time_s must not precede dispatch_time_s")
+            if self.first_token_time_s is not None:
+                if self.first_token_time_s < self.dispatch_time_s:
+                    raise ValueError("first_token_time_s must not precede dispatch_time_s")
+                if self.completion_time_s < self.first_token_time_s:
+                    raise ValueError("completion_time_s must not precede first_token_time_s")
+                if self.output_tokens < 1:
+                    raise ValueError("a first token requires output_tokens to be positive")
         if self.status is DispatchStatus.SUCCESS:
+            if self.dispatch_time_s is None:
+                raise ValueError("success records require dispatch_time_s")
             if self.first_token_time_s is None:
                 raise ValueError("success records require first_token_time_s")
             if self.output_tokens < 1:
@@ -90,7 +97,7 @@ class RequestRecord:
         envelope: RequestEnvelope,
         *,
         enqueue_time_s: float,
-        dispatch_time_s: float,
+        dispatch_time_s: float | None,
         first_token_time_s: float | None,
         completion_time_s: float,
         output_tokens: int,

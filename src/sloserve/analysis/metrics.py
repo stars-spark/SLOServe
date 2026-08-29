@@ -39,6 +39,7 @@ class MetricsSummary:
     error_count: int
     timeout_count: int
     cancelled_count: int
+    rejected_count: int
     success_output_tokens: int
     wall_clock_window_s: float | None
     token_throughput_per_s: float | None
@@ -103,6 +104,14 @@ def calculate_metrics(
 ) -> MetricsSummary:
     """Calculate documented metrics without I/O or external state."""
     successes = [record for record in records if record.status is DispatchStatus.SUCCESS]
+    error_count = sum(record.status is DispatchStatus.ERROR for record in records)
+    timeout_count = sum(record.status is DispatchStatus.TIMEOUT for record in records)
+    cancelled_count = sum(record.status is DispatchStatus.CANCELLED for record in records)
+    rejected_count = sum(record.status is DispatchStatus.REJECTED for record in records)
+    if len(successes) + error_count + timeout_count + cancelled_count + rejected_count != len(
+        records
+    ):
+        raise ValueError("every request must have a supported terminal status")
     ttft_values = [
         record.first_token_time_s - record.arrival_time_s
         for record in successes
@@ -115,9 +124,15 @@ def calculate_metrics(
     ]
     end_to_end_values = [record.completion_time_s - record.arrival_time_s for record in successes]
     success_queue_wait_values = [
-        record.dispatch_time_s - record.arrival_time_s for record in successes
+        record.dispatch_time_s - record.arrival_time_s
+        for record in successes
+        if record.dispatch_time_s is not None
     ]
-    all_queue_wait_values = [record.dispatch_time_s - record.arrival_time_s for record in records]
+    all_queue_wait_values = [
+        record.dispatch_time_s - record.arrival_time_s
+        for record in records
+        if record.dispatch_time_s is not None
+    ]
 
     success_output_tokens = sum(record.output_tokens for record in successes)
     if records:
@@ -131,13 +146,18 @@ def calculate_metrics(
         wall_clock_window_s = None
         token_throughput_per_s = None
 
-    by_class_records = {
-        request_class: [record for record in records if record.request_class is request_class]
-        for request_class in RequestClass
-    }
+    # Fairness is computed only over request classes that actually appear in the data.
+    # An absent class has no observations, so scoring it as 0.0 attainment would falsely
+    # report unfairness (e.g. a single-class workload). Per-class attainment is likewise
+    # reported only for present classes, kept in RequestClass order for determinism.
+    present_classes = {record.request_class for record in records}
     slo_by_class = {
-        request_class: _attainment(class_records, workload_config)
-        for request_class, class_records in by_class_records.items()
+        request_class: _attainment(
+            [record for record in records if record.request_class is request_class],
+            workload_config,
+        )
+        for request_class in RequestClass
+        if request_class in present_classes
     }
     class_rates = [summary.rate for summary in slo_by_class.values()]
     rate_sum = sum(class_rates)
@@ -145,13 +165,15 @@ def calculate_metrics(
     jain_fairness_index = (
         rate_sum * rate_sum / (len(class_rates) * squared_rate_sum) if squared_rate_sum > 0 else 1.0
     )
+    slo_attainment_gap = (max(class_rates) - min(class_rates)) if class_rates else 0.0
 
     return MetricsSummary(
         request_count=len(records),
         success_count=len(successes),
-        error_count=sum(record.status is DispatchStatus.ERROR for record in records),
-        timeout_count=sum(record.status is DispatchStatus.TIMEOUT for record in records),
-        cancelled_count=sum(record.status is DispatchStatus.CANCELLED for record in records),
+        error_count=error_count,
+        timeout_count=timeout_count,
+        cancelled_count=cancelled_count,
+        rejected_count=rejected_count,
         success_output_tokens=success_output_tokens,
         wall_clock_window_s=wall_clock_window_s,
         token_throughput_per_s=token_throughput_per_s,
@@ -162,6 +184,6 @@ def calculate_metrics(
         longest_queue_wait_s=max(all_queue_wait_values) if all_queue_wait_values else None,
         slo_overall=_attainment(records, workload_config),
         slo_by_class=slo_by_class,
-        slo_attainment_gap=max(class_rates) - min(class_rates),
+        slo_attainment_gap=slo_attainment_gap,
         jain_fairness_index=jain_fairness_index,
     )

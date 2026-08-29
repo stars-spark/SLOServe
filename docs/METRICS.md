@@ -15,17 +15,17 @@ PyTorch、vLLM、模型等值必须在第 7 步从实际运行环境采集并由
 
 - `arrival_time_s`：请求按工作负载计划到达外部服务的时刻。
 - `enqueue_time_s`：请求被外部准入队列接收的时刻，不得早于 arrival。
-- `dispatch_time_s`：请求获得外部并发容量并被发送到后端的时刻，不得早于 enqueue。
+- `dispatch_time_s`：请求获得外部并发容量并被发送到后端的时刻，不得早于 enqueue。若请求被
+  拒绝，或在排队中超时/取消而从未送入后端，则为 `null`。
 - `first_token_time_s`：收到后端第一个输出 token 的时刻。若终态前没有收到 token，则为
   `null`。
-- `completion_time_s`：请求到达终态的时刻。success 时表示完整响应结束；error、timeout 或
-  cancelled 时表示记录到相应错误/超时/取消的时刻。它不得早于 dispatch；若有 first token，
-  也不得早于 first token。
+- `completion_time_s`：请求到达终态的时刻。success 时表示完整响应结束；error、timeout、
+  cancelled 或 rejected 时表示记录到相应错误/超时/取消/拒绝的时刻。有 dispatch 时它不得早于
+  dispatch；若有 first token，也不得早于 first token；无 dispatch 时它不得早于 enqueue。
 
-当前离线 schema 要求每条终态记录都有 arrival、enqueue、dispatch 和 completion。success
-记录还必须有 first token 且 `output_tokens >= 1`。这与当前 dispatcher 在取得容量并开始后端
-调用后才产生终态结果的边界一致；未来若第 6 步需要记录“排队中即取消”，应先版本化扩展原始
-schema，而不能把不存在的 dispatch 时间伪造成真实事件。
+每条终态记录都有 arrival、enqueue 和 completion；dispatch 可选。无 dispatch 时 first token
+也必须为 `null`，status 不得为 success。success 记录必须同时有 dispatch、first token，且
+`output_tokens >= 1`。这样 rejected、排队中 timeout/cancelled 不需要伪造不存在的后端事件。
 
 ## 请求级指标
 
@@ -36,8 +36,10 @@ schema，而不能把不存在的 dispatch 时间伪造成真实事件。
   `status=success` 且 `output_tokens >= 2` 时有定义。只有一个输出 token 的成功请求以及所有
   非成功请求从 TPOT 聚合中剔除。
 - 端到端延迟 = `completion_time_s - arrival_time_s`。
-- 排队等待 = `dispatch_time_s - arrival_time_s`。最长等待是所有记录的排队等待最大值，包含
-  success、error、timeout 和 cancelled，以便失败请求的排队经历不会被隐藏。
+- 排队等待 = `dispatch_time_s - arrival_time_s`，只对实际发生过 dispatch 的记录有定义；未
+  dispatch 的 rejected、排队中 timeout/cancelled 不进入排队等待分位数或最长等待。最长等待是
+  所有已 dispatch 记录的排队等待最大值，包含 success、error、timeout 和 cancelled，以便已送入
+  后端的失败请求排队经历不会被隐藏。
 
 TTFT、TPOT、端到端延迟和排队等待的 P50/P95/P99 只对 success 请求计算；TPOT 还应用上述
 `output_tokens >= 2` 条件。空集合的分位数为 `null`。
@@ -67,18 +69,21 @@ token 吞吐量 = 所有 `status=success` 请求的 `output_tokens` 之和 / 墙
 2. TTFT `<= ttft_slo_ms / 1000`；
 3. 端到端延迟 `<= end_to_end_slo_ms / 1000`。
 
-边界值按达标处理。error、timeout 和 cancelled 一律为 SLO 未达标，即使取消前已经收到 first
+边界值按达标处理。error、timeout、cancelled 和 rejected 一律为 SLO 未达标，即使取消前已经收到 first
 token。输出总体及 interactive、batch 分类别的请求数、达标数、达标率，并分别报告 success、
-error（失败）、timeout 和 cancelled 数量。总体或某一类别没有请求时，其达标率约定为 `0.0`；
+error（失败）、timeout、cancelled 和 rejected 数量。这五类终态计数之和必须等于请求总数。
+总体或某一类别没有请求时，其达标率约定为 `0.0`；
 必须结合该项的 `request_count=0` 解读为“无观测”，不能解释成实际测得的 0% 服务水平。
 
-公平性只基于 interactive 和 batch 两类的 SLO 达标率 `x_i` 离线计算，不另设代理指标：
+公平性只基于**数据中实际出现过的** `RequestClass` 的 SLO 达标率 `x_i` 离线计算，不另设
+代理指标。空类别（该轮没有任何请求）不参与公平性，也不出现在分类别报告里——否则会把“无观测”
+误当成 0% 达标而虚报不公平（例如纯 interactive 负载）：
 
-- 每个 `RequestClass` 的达标率都单独报告。
-- 达标率差距 = `max(x_i) - min(x_i)`，0 表示两类达标率完全相同。
-- Jain 公平性指数：`J = (sum(x_i))^2 / (n * sum(x_i^2))`，这里 `n=2`。若所有
-  `x_i=0`，定义 `J=1.0` 以避免 `0/0`；这只是公式边界约定，尤其在空输入或全失败时不代表
-  已获得公平性的实验证据。Jain 指数作为单一标量报告。
+- 每个**出现过的** `RequestClass` 的达标率都单独报告（按 `RequestClass` 顺序，保证确定性）。
+- 达标率差距 = `max(x_i) - min(x_i)`，0 表示各出现类别达标率完全相同；没有任何请求时约定为 `0.0`。
+- Jain 公平性指数：`J = (sum(x_i))^2 / (n * sum(x_i^2))`，`n` 为**出现过的类别数**（0、1 或 2）。
+  若所有 `x_i=0`（含空输入、全失败，或没有出现任何类别），定义 `J=1.0` 以避免 `0/0`；这只是
+  公式边界约定，不代表已获得公平性的实验证据。Jain 指数作为单一标量报告。
 
 ## 确定性配置标识与文件写入
 
@@ -88,5 +93,5 @@ error（失败）、timeout 和 cancelled 数量。总体或某一类别没有�
 
 统一写入入口必须使用 `MetricsConfig.output_directory` 决定目录，并分别服从 `save_jsonl` 和
 `save_csv`。JSONL 读回后每个 dataclass 字段（包括复用的 `RequestClass` 和 `DispatchStatus`）
-必须与写入前相等。CSV 列与 JSONL 字段一一对应，空的 `error_type` 或 first-token 值写为空字段；
+必须与写入前相等。CSV 列与 JSONL 字段一一对应，空的 `error_type`、dispatch 或 first-token 值写为空字段；
 CSV 始终是可从同一内存记录重建的派生格式，不替代 JSONL 事实源。
