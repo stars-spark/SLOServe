@@ -16,3 +16,6 @@ build/
 # Local model and benchmark scratch data must not be committed accidentally.
 .cache/
 results/tmp/
+
+# Local-only agent instructions file (kept on disk, not tracked).
+CLAUDE.md
