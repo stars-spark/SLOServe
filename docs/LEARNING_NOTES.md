@@ -757,3 +757,63 @@ W2-1 已验证策略接口和配置切换，但静态类别优先级不能随请
 
 进入 W2-3，按后续任务范围完成下一项 Week 2 工作；在新的明确验收合同之前不增加负载、不执行策略
 性能比较，也不扩展到多 GPU、KV cache 感知或 vLLM 内部调度。
+
+## 2026-08-30 — Week 2（W2-3a）：多策略正确性实验(离线半)
+
+### 要解决的问题
+
+Week 2 最后一项"完成小规模正确性实验"的验收是:三种策略可配置切换、测试全通过、无明显请求
+饥饿。本片(W2-3a)只做**离线可测**的一半:一个"每策略跑一遍 benchmark 管线 + 从原始记录派生防
+饥饿分析"的 runner、一个制造争用的起点配置、CLI 子命令与全套离线测试。真实 GPU 执行与裁决留给
+W2-3b。不修改 vLLM 内部调度、不新增负载结论。
+
+### 为什么需要
+
+到 W2-2 为止三种策略都已实现,但从未在"存在排队争用"的场景下被一起检验过——step7 的 smoke
+负载太低、几乎不排队,无法证明 SLO-aware 硬 aging 真能兜住等待、也无法暴露 Static Priority 在
+高争用下饿死 batch 的行为。需要一个纯函数、可确定复现、以原始 JSONL/CSV 为事实源的分析,把
+"无明显饥饿"变成可判读的量化证据。
+
+### 关键命令或代码
+
+- `src/sloserve/experiments/correctness.py`:`run_correctness_experiment(config, make_backend,
+  env_version, policies, bound_margin_s, ...)` 对每个策略用 `_with_policy` 复制配置、`make_backend`
+  工厂**每策略新建后端**(固定种子会复用 request_id,共享后端会串味),调用现有 `run_benchmark`
+  并以 `file_stem=f"correctness-{policy}"` 落盘,再对 `formal_records` 调 `analyze_policy`。
+- `analyze_policy` 纯函数派生:`max_queue_wait_s=max(dispatch−arrival)`、`_max_queue_depth`
+  用 (enqueue,+1)/(dispatch,−1) 扫描线求同时等待峰值(同时刻先出后进 → 半开区间 [enqueue,dispatch)),
+  `observed_max_service_s`、per-class 等待 max/P95(nearest-rank)、`rejected_count` 与
+  `unfinished_count`(非终态状态计数)。
+- 裁决 `StarvationVerdict`:`max_queue_depth<2 → NO_CONTENTION`;否则 `all_terminal 且
+  unfinished_count==0 且 max_queue_wait ≤ aging_threshold_s+bound_margin_s → WITHIN_BOUND`;
+  否则 `BOUND_EXCEEDED`。该 bound 正是 W2-2 硬 aging 承诺的"有界等待"的可检验形式。
+- `configs/correctness.yaml`:争用起点 `max_in_flight=1`、`request_rate_rps=8.0`、`total_requests=60`、
+  `interactive_fraction=0.6`、`aging_threshold_s=3.0`、`queue_capacity=256`、`repetitions=3`;文件
+  顶部注明这是**起点**,W2-3b 要在真机上调到确有争用。
+- `sloserve correctness --config ...` 子命令 + `build_correctness_runtime`(lazy 工厂,构造不做 I/O)。
+- 检查:`UV_CACHE_DIR=/tmp/sloserve-uv-cache uv run pytest tests/test_correctness.py -q`。
+
+### 失败与诊断
+
+- **本片发生一次编排事故(已复盘并纠正)**:主控基于一张过期的 `git status` 快照误判"Codex 没有
+  产出",随即自己开始写 `correctness.py`;实际上被委派的 Codex 后台作业此时才刚启动并在并发改
+  同一批文件,造成竞态。发现后:停掉该 Codex 作业(只杀该 job 进程)、以磁盘最终收敛版(Codex 版,
+  比主控草稿更防御)为准、由主控接管收尾。**教训**:委派后要以"进程/文件系统实时状态"而非一次性
+  快照判断从属任务是否在跑;`--wait` 未真正阻塞时,用 companion 的进程/状态而非子 agent 的口头回报。
+- 收敛后跑测试发现 Codex 自带的 `test_no_contention...` 与其实现自相矛盾:它取 `records[:1]`
+  (record 0 的 `enqueue==dispatch`,零宽等待)却断言 `max_queue_depth==1`;而半开区间语义(已被
+  `depth==2` 那条通过测试佐证是自洽的)对零宽区间给 0。修法是让单条样例改用**真的等待过**的记录
+  `records[1:2]`,使 `depth==1` 名副其实——保留正确的实现,修正选错样例的测试。
+
+### 实际结果
+
+四项检查全绿:`uv lock --check`、Ruff lint、Ruff format(58 文件)、`uv run pytest` **81 passed**
+(较 W2-2 的 75 增 6 条正确性测试)。`config-check configs/correctness.yaml` 通过 schema 校验。
+本片**没有**产生任何吞吐/延迟/SLO 数据,也未启动真实 GPU——三条策略的实际裁决(尤其 Static
+Priority 是否 BOUND_EXCEEDED、SLO-aware 是否 WITHIN_BOUND)必须由 W2-3b 的真机运行给出。
+
+### 下一步
+
+W2-3b:在原生 Ubuntu 起真实 vLLM,用 `correctness.yaml` 先探一次、按 `max_queue_depth` 调到确有
+争用(≥2)并触发硬 aging,再固定种子跑三策略各≥3 次,如实判读 `correctness-report.json`(不篡改
+负面结果),GPU 利用率/显存/功耗与请求指标一并记录,更新 PROGRESS 勾掉 Week 2 最后一项。
