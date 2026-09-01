@@ -817,3 +817,71 @@ Priority 是否 BOUND_EXCEEDED、SLO-aware 是否 WITHIN_BOUND)必须由 W2-3b �
 W2-3b:在原生 Ubuntu 起真实 vLLM,用 `correctness.yaml` 先探一次、按 `max_queue_depth` 调到确有
 争用(≥2)并触发硬 aging,再固定种子跑三策略各≥3 次,如实判读 `correctness-report.json`(不篡改
 负面结果),GPU 利用率/显存/功耗与请求指标一并记录,更新 PROGRESS 勾掉 Week 2 最后一项。
+
+## 2026-08-31 — Week 2（W2-3b）：真机多策略正确性实验(两个负载点)
+
+### 要解决的问题
+
+在真实单 GPU vLLM 上跑 W2-3a 的 `sloserve correctness`,验收 Week 2 最后一项:三策略可配置切换、
+测试通过、无明显请求饥饿。只跑数与记录,不改策略/分析代码,不作性能结论,不碰 vLLM 内部调度。
+
+### 为什么需要两个负载点
+
+单槽服务能力 ≈ 0.6 rps。**固定到达 + max_in_flight=1 是确定性 D/D/1 队列**:rps<0.6 队列空
+(NO_CONTENTION),rps>0.6 单调无界增长(饱和)——没有稳定中间态。要"会堆又能排空的中度争用",
+数学上必须引入到达随机性(Poisson 未实现)或多并发槽(mif>1)。经 4 次探针确认:**"static 饿死
+batch 的对照"是饱和现象(mif=1),"人人有界不饥饿"是非饱和现象(mif=4),二者在当前机制下互斥**。
+故正式跑两个点各取其一,拼出完整诚实图景。
+
+### 关键命令或代码
+
+- 两个版本化配置:`configs/correctness-overload.yaml`(mif=1, rps=1.5)、
+  `configs/correctness-concurrent.yaml`(mif=4, rps=2.0);其余同 `correctness.yaml`
+  (total=60, interactive_fraction=0.6, warmup=5, repetitions=3, aging_threshold_s=3.0)。
+- 每点:`scripts/serve.sh <cfg>` 起真实 vLLM(Qwen3-0.6B commit c1899de2…)→ 轮询 `/v1/models`
+  就绪 → `uv run sloserve correctness --config <cfg>` → `pkill` 停服务、确认端口空 → 下一点。
+  两点不同时起服务。固定种子、3 重复,原始数据落 `results/raw/week2-step3-correctness/{overload,concurrent}/`。
+
+### 成功标志 / 实际结果(真机,3 重复,每策略 formal=180、全 dispatched、全终态、0 拒绝)
+
+**过载点 overload(mif=1, rps=1.5,系统饱和 → 全 bound_exceeded,aging_bound=5s):**
+
+| 策略 | 裁决 | depth | interactive 最大等待 | batch 最大等待 |
+|---|---|---|---|---|
+| fcfs | bound_exceeded | 41 | 69.8s | 70.0s |
+| static_priority | bound_exceeded | 27 | **3.4s** | **73.0s** |
+| slo_aware | bound_exceeded | 43 | 74.2s | 74.4s |
+
+- static_priority **如实暴露 batch 饥饿**(interactive 3.4s vs batch 73.0s);fcfs 类别无视(两类≈70s);
+  slo_aware 过载下所有请求瞬间超 3s 阈值、全进硬 aging 桶按到达排序,**退化为 FCFS-公平**(两类≈74s,
+  无类别被单独针对)。硬 aging 保证"相对不被单独饿死",不保证系统整体过载时的绝对等待。
+
+**并发点 concurrent(mif=4, rps=2.0,非饱和 → 全 within_bound,0 拒绝):**
+
+| 策略 | 裁决 | depth | interactive | batch |
+|---|---|---|---|---|
+| fcfs | within_bound | 3 | 1.33s | 1.09s |
+| static_priority | within_bound | 4 | 1.21s | 2.59s |
+| slo_aware | within_bound | 3 | 2.46s | 2.13s |
+
+- 有真实排队(depth 3–4)、三策略全 within_bound、无任何类别饥饿、0 拒绝——干净满足"无明显饥饿"。
+  该点 waits<3s 阈值,硬 aging 作为休眠安全网未触发(其正确性由 W2-2/W2-3a 离线单测覆盖)。
+
+**GPU(两点一致量级):** 利用率 mean ~40–44% / peak 43–59%;显存 peak 6136 MiB;功耗 mean ~79–83W /
+peak 86–102W。观测值可由 `results/raw/week2-step3-correctness/` 的 JSONL、per-policy completeness、
+config_hash 与 metadata 复现。
+
+**边界**:这是单 GPU **正确性验证**,不是策略性能比较;overload 的 bound_exceeded 是"系统过载"而非
+调度缺陷,concurrent 的 within_bound 才是防饥饿证据。三策略均仅由 config 切换。
+
+### 失败与诊断
+
+- Codex 起 vLLM 报 `RuntimeError: Failed to infer device type`——**Codex 沙箱看不到 GPU/CUDA**,
+  真机 serve 只能由有 GPU 访问的 Claude/Bash 做;非 GPU 活(建配置/写文档)仍可委派。
+- 编排脚本首轮"SERVER DIED"误报:serve.sh 在 exec vllm 前先跑 serve-command+flashinfer 补丁,
+  最初几秒 vllm 进程未起,过早的 pgrep 死检查误判。改为纯 `/v1/models` 就绪轮询 + 30s 后才判死,修复。
+
+### 下一步
+
+Week 2 完成(三策略可切换、测试全通过、并发点无明显饥饿、过载点如实记录 static 饥饿)。进入
+Week 3:完整评测(实验 A–E)、每组≥3 重复、吞吐-延迟/速率-P99/SLO 达标率图表、README 与技术报告。

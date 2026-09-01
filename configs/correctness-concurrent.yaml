@@ -1,0 +1,64 @@
+# W2-3b CONCURRENT load point (mif=4): non-saturated, all policies bounded, no starvation, 0 rejected.
+backend:
+  base_url: http://127.0.0.1:8000/v1
+  model: Qwen/Qwen3-0.6B
+  model_revision: c1899de289a04d12100db370d81485cdf75e47ca
+  tokenizer_revision: c1899de289a04d12100db370d81485cdf75e47ca
+  request_timeout_s: 180.0
+
+server:
+  host: 127.0.0.1
+  port: 8000
+  gpu_memory_utilization: 0.5
+  max_model_len: 4096
+  max_num_seqs: 16
+  dtype: bfloat16
+  enforce_eager: true
+
+router:
+  policy: fcfs
+  listen_host: 127.0.0.1
+  listen_port: 8080
+  max_in_flight: 4
+  queue_capacity: 256
+
+slo_aware:
+  input_token_cost: 1.0
+  output_token_cost: 4.0
+  cost_weight: 1.0
+  slack_weight: 1.0
+  waiting_weight: 1.0
+  aging_threshold_s: 3.0
+
+workload:
+  arrival_process: fixed
+  request_rate_rps: 2.0
+  total_requests: 60
+  interactive_fraction: 0.6
+  random_seed: 20250825
+  warmup_requests: 5
+  repetitions: 3
+  interactive:
+    input_tokens:
+      minimum: 64
+      maximum: 256
+    output_tokens:
+      minimum: 32
+      maximum: 128
+    ttft_slo_ms: 1500.0
+    end_to_end_slo_ms: 10000.0
+  batch:
+    input_tokens:
+      minimum: 512
+      maximum: 2048
+    output_tokens:
+      minimum: 128
+      maximum: 512
+    ttft_slo_ms: 10000.0
+    end_to_end_slo_ms: 120000.0
+
+metrics:
+  output_directory: results/raw/week2-step3-correctness/concurrent
+  gpu_sample_interval_s: 0.5
+  save_jsonl: true
+  save_csv: true

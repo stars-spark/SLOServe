@@ -221,3 +221,24 @@ or performance claim has been made.
 This slice did not access a GPU, network, or real vLLM, did not modify vLLM's internal scheduler,
 and makes no policy-performance claim. SLO-aware scoring, aging, normalization, and estimated
 service time remain for W2-2.
+
+## 2026-08-31 — Week 2 complete: W2-2/W2-3a/W2-3b
+
+- W2-2: SLO-aware policy (normalized cost/slack/waiting score + two-tier hard aging) behind the
+  common interface; config factory now builds all three policies. Offline tests + 4 checks green.
+- W2-3a: offline multi-policy correctness runner + starvation analysis (`sloserve correctness`,
+  `analyze_policy`, `StarvationVerdict`) with a contention config. 81 pytest tests pass.
+- W2-3b: real single-GPU run at two load points (3 repetitions each, fixed seed), raw data under
+  `results/raw/week2-step3-correctness/{overload,concurrent}/`:
+  - concurrent (mif=4, rps=2.0): all three policies WITHIN_BOUND, 0 rejected, depth 3–4 — no
+    obvious starvation, the no-starvation acceptance evidence.
+  - overload (mif=1, rps=1.5): all BOUND_EXCEEDED (system saturated, not a scheduling defect);
+    static_priority honestly starves batch (interactive 3.4s vs batch 73.0s), FCFS is class-blind
+    (~70s both), slo_aware ages to fairness (~74s both, no class singled out).
+  - GPU util mean ~40–44%, memory peak 6136 MiB, power mean ~79–83 W.
+
+Week 2 acceptance met: three policies switch by configuration alone, all tests pass, and the
+concurrent load point shows no obvious request starvation. This is single-GPU correctness
+validation, not a policy-performance comparison. Note: Codex cannot access the GPU
+(`Failed to infer device type`), so the real-GPU runs were executed directly. Next: Week 3 full
+evaluation (experiments A–E, throughput–latency / rate–P99 / SLO-attainment charts, report).

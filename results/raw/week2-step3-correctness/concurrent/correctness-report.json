@@ -1,0 +1,101 @@
+{
+  "bound_margin_s": 2.0,
+  "config_hash": "50bc403d2b69d4955ba4ef8b16fc3dc8fbe51500e58de7554a9ab58a9dc01ab2",
+  "env_version": "python=3.11.14;driver=580.178.04;model_revision=c1899de289a04d12100db370d81485cdf75e47ca;config_hash=50bc403d2b69d4955ba4ef8b16fc3dc8fbe51500e58de7554a9ab58a9dc01ab2;vllm=unavailable;torch=unavailable",
+  "policies": [
+    {
+      "aging_bound_s": 5.0,
+      "aging_threshold_s": 3.0,
+      "all_terminal": true,
+      "bound_margin_s": 2.0,
+      "class_waits": [
+        {
+          "dispatched_count": 87,
+          "max_queue_wait_s": 1.3334742750002988,
+          "p95_queue_wait_s": 0.9375256539997281,
+          "request_class": "interactive"
+        },
+        {
+          "dispatched_count": 93,
+          "max_queue_wait_s": 1.0919565819995114,
+          "p95_queue_wait_s": 0.9076200270001209,
+          "request_class": "batch"
+        }
+      ],
+      "dispatched_count": 180,
+      "formal_count": 180,
+      "max_queue_depth": 3,
+      "max_queue_wait_s": 1.3334742750002988,
+      "observed_max_service_s": 4.508132640999975,
+      "policy_name": "fcfs",
+      "rejected_count": 0,
+      "terminal_count": 180,
+      "unfinished_count": 0,
+      "verdict": "within_bound",
+      "within_aging_bound": true
+    },
+    {
+      "aging_bound_s": 5.0,
+      "aging_threshold_s": 3.0,
+      "all_terminal": true,
+      "bound_margin_s": 2.0,
+      "class_waits": [
+        {
+          "dispatched_count": 87,
+          "max_queue_wait_s": 1.2090737359994819,
+          "p95_queue_wait_s": 0.7193572080004742,
+          "request_class": "interactive"
+        },
+        {
+          "dispatched_count": 93,
+          "max_queue_wait_s": 2.593420574999982,
+          "p95_queue_wait_s": 1.438644517999819,
+          "request_class": "batch"
+        }
+      ],
+      "dispatched_count": 180,
+      "formal_count": 180,
+      "max_queue_depth": 4,
+      "max_queue_wait_s": 2.593420574999982,
+      "observed_max_service_s": 4.72976231299981,
+      "policy_name": "static_priority",
+      "rejected_count": 0,
+      "terminal_count": 180,
+      "unfinished_count": 0,
+      "verdict": "within_bound",
+      "within_aging_bound": true
+    },
+    {
+      "aging_bound_s": 5.0,
+      "aging_threshold_s": 3.0,
+      "all_terminal": true,
+      "bound_margin_s": 2.0,
+      "class_waits": [
+        {
+          "dispatched_count": 87,
+          "max_queue_wait_s": 2.4570702630007872,
+          "p95_queue_wait_s": 0.8906205880002744,
+          "request_class": "interactive"
+        },
+        {
+          "dispatched_count": 93,
+          "max_queue_wait_s": 2.1311409649997586,
+          "p95_queue_wait_s": 1.4110855789995185,
+          "request_class": "batch"
+        }
+      ],
+      "dispatched_count": 180,
+      "formal_count": 180,
+      "max_queue_depth": 3,
+      "max_queue_wait_s": 2.4570702630007872,
+      "observed_max_service_s": 4.807426604000284,
+      "policy_name": "slo_aware",
+      "rejected_count": 0,
+      "terminal_count": 180,
+      "unfinished_count": 0,
+      "verdict": "within_bound",
+      "within_aging_bound": true
+    }
+  ],
+  "scope_note": "单 GPU 正确性实验：行为与防饥饿检查，非策略性能比较"
+}
