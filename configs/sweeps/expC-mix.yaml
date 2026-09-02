@@ -1,0 +1,27 @@
+# Experiment C: workload class mix at a fixed request rate for all policies.
+base_config: ../base.yaml
+base_overrides:
+  router:
+    max_in_flight: 4
+  workload:
+    request_rate_rps: 2.0
+    total_requests: 60
+    interactive_fraction: 0.5
+    random_seed: 20250825
+    warmup_requests: 5
+    repetitions: 3
+  slo_aware:
+    aging_threshold_s: 3.0
+  metrics:
+    output_directory: results/raw/week3-expC-mix
+
+points:
+  - {label: fcfs-interactive-0.2, policy: fcfs, interactive_fraction: 0.2}
+  - {label: static-priority-interactive-0.2, policy: static_priority, interactive_fraction: 0.2}
+  - {label: slo-aware-interactive-0.2, policy: slo_aware, interactive_fraction: 0.2}
+  - {label: fcfs-interactive-0.5, policy: fcfs, interactive_fraction: 0.5}
+  - {label: static-priority-interactive-0.5, policy: static_priority, interactive_fraction: 0.5}
+  - {label: slo-aware-interactive-0.5, policy: slo_aware, interactive_fraction: 0.5}
+  - {label: fcfs-interactive-0.8, policy: fcfs, interactive_fraction: 0.8}
+  - {label: static-priority-interactive-0.8, policy: static_priority, interactive_fraction: 0.8}
+  - {label: slo-aware-interactive-0.8, policy: slo_aware, interactive_fraction: 0.8}

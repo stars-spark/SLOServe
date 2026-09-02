@@ -63,6 +63,9 @@ class ServerConfig(StrictModel):
     gpu_memory_utilization: float = Field(gt=0, le=1)
     max_model_len: int = Field(ge=1)
     max_num_seqs: int = Field(ge=1)
+    max_num_batched_tokens: int | None = Field(default=None, ge=1)
+    enable_chunked_prefill: bool | None = None
+    enable_prefix_caching: bool | None = None
     dtype: TorchDtype
     enforce_eager: bool
 
@@ -86,6 +89,7 @@ class SloAwareConfig(StrictModel):
     slack_weight: float = Field(ge=0)
     waiting_weight: float = Field(ge=0)
     aging_threshold_s: float = Field(gt=0)
+    disable_length_estimate: bool = False
 
     @model_validator(mode="after")
     def at_least_one_scoring_weight(self) -> SloAwareConfig:
@@ -211,6 +215,20 @@ class ExperimentConfig(StrictModel):
         ]
         if self.server.enforce_eager:
             args.append("--enforce-eager")
+        if self.server.max_num_batched_tokens is not None:
+            args.extend(["--max-num-batched-tokens", str(self.server.max_num_batched_tokens)])
+        if self.server.enable_chunked_prefill is not None:
+            args.append(
+                "--enable-chunked-prefill"
+                if self.server.enable_chunked_prefill
+                else "--no-enable-chunked-prefill"
+            )
+        if self.server.enable_prefix_caching is not None:
+            args.append(
+                "--enable-prefix-caching"
+                if self.server.enable_prefix_caching
+                else "--no-enable-prefix-caching"
+            )
         return args
 
 

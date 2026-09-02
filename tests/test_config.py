@@ -63,6 +63,9 @@ def test_server_defaults_are_conservative() -> None:
     assert config.server.port == 8000
     assert config.server.gpu_memory_utilization == 0.5
     assert config.server.max_model_len == 4096
+    assert config.server.max_num_batched_tokens is None
+    assert config.server.enable_chunked_prefill is None
+    assert config.server.enable_prefix_caching is None
     assert config.server.dtype.value == "bfloat16"
     assert config.server.enforce_eager is True
 
@@ -80,6 +83,23 @@ def test_vllm_serve_args_pin_model_and_tokenizer() -> None:
     assert args[args.index("--port") + 1] == "8000"
     assert args[args.index("--gpu-memory-utilization") + 1] == "0.5"
     assert "--enforce-eager" in args
+
+
+def test_vllm_serve_args_express_experiment_d_server_parameters() -> None:
+    config = load_config(PROJECT_ROOT / "configs" / "base.yaml")
+    server = config.server.model_copy(
+        update={
+            "max_num_batched_tokens": 2048,
+            "enable_chunked_prefill": True,
+            "enable_prefix_caching": False,
+        }
+    )
+
+    args = config.model_copy(update={"server": server}).vllm_serve_args()
+
+    assert args[args.index("--max-num-batched-tokens") + 1] == "2048"
+    assert "--enable-chunked-prefill" in args
+    assert "--no-enable-prefix-caching" in args
 
 
 def test_server_port_must_match_backend_url() -> None:

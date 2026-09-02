@@ -19,6 +19,7 @@ class SloAwarePolicy(SchedulingPolicy):
         self.slack_weight = config.slack_weight
         self.waiting_weight = config.waiting_weight
         self.aging_threshold_s = config.aging_threshold_s
+        self.disable_length_estimate = config.disable_length_estimate
 
     @property
     def name(self) -> str:
@@ -31,11 +32,15 @@ class SloAwarePolicy(SchedulingPolicy):
         if budget <= 0.0:
             budget = _EPSILON
 
-        service_est = request.max_output_tokens * self.output_token_cost
-        cost = (
-            self.input_token_cost * request.input_tokens
-            + self.output_token_cost * request.max_output_tokens
-        )
+        if self.disable_length_estimate:
+            service_est = 0.0
+            cost = 0.0
+        else:
+            service_est = request.max_output_tokens * self.output_token_cost
+            cost = (
+                self.input_token_cost * request.input_tokens
+                + self.output_token_cost * request.max_output_tokens
+            )
         slack = request.deadline_time_s - now_s - service_est
         waiting = now_s - request.arrival_time_s
 

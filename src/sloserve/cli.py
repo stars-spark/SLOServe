@@ -13,6 +13,7 @@ from dataclasses import dataclass
 
 import httpx
 
+from sloserve.analysis.plot_results import plot_sweep_results
 from sloserve.config import ExperimentConfig, load_config
 from sloserve.experiments.benchmark import BenchmarkResult, TelemetryBackend, run_benchmark
 from sloserve.experiments.correctness import (
@@ -21,6 +22,12 @@ from sloserve.experiments.correctness import (
 )
 from sloserve.experiments.gpu import GpuSampler, NvidiaSmiSampler
 from sloserve.experiments.metadata import capture_environment
+from sloserve.experiments.sweep import (
+    SweepPoint,
+    SweepResult,
+    load_sweep_config,
+    run_sweep,
+)
 from sloserve.workload.http_backend import HttpStreamingBackend
 
 
@@ -41,6 +48,18 @@ class CorrectnessRuntime:
     """Lazy per-policy dependencies for a correctness experiment."""
 
     config: ExperimentConfig
+    make_backend: Callable[[], AbstractAsyncContextManager[TelemetryBackend]]
+    make_gpu_sampler: Callable[[], GpuSampler]
+    clock: Callable[[], float]
+    env_version: str
+
+
+@dataclass(frozen=True, slots=True)
+class SweepRuntime:
+    """Lazy per-point dependencies for a single-GPU evaluation sweep."""
+
+    config: ExperimentConfig
+    points: tuple[SweepPoint, ...]
     make_backend: Callable[[], AbstractAsyncContextManager[TelemetryBackend]]
     make_gpu_sampler: Callable[[], GpuSampler]
     clock: Callable[[], float]
@@ -117,6 +136,46 @@ def build_correctness_runtime(
     )
 
 
+def build_sweep_runtime(
+    config: ExperimentConfig,
+    points: Sequence[SweepPoint],
+    *,
+    env_version: str,
+    clock: Callable[[], float] = time.monotonic,
+    client_factory: Callable[..., httpx.AsyncClient] = httpx.AsyncClient,
+    sampler_factory: Callable[..., GpuSampler] = NvidiaSmiSampler,
+) -> SweepRuntime:
+    """Assemble fresh per-point client and sampler factories without starting I/O."""
+
+    @asynccontextmanager
+    async def make_backend() -> AsyncIterator[TelemetryBackend]:
+        client = client_factory(
+            base_url=config.backend.base_url,
+            timeout=config.backend.request_timeout_s,
+        )
+        async with client:
+            yield HttpStreamingBackend(
+                backend_config=config.backend,
+                client=client,
+                clock=clock,
+            )
+
+    def make_gpu_sampler() -> GpuSampler:
+        return sampler_factory(
+            interval_s=config.metrics.gpu_sample_interval_s,
+            clock=clock,
+        )
+
+    return SweepRuntime(
+        config=config,
+        points=tuple(points),
+        make_backend=make_backend,
+        make_gpu_sampler=make_gpu_sampler,
+        clock=clock,
+        env_version=env_version,
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the top-level CLI parser."""
     parser = argparse.ArgumentParser(prog="sloserve")
@@ -146,6 +205,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="run the single-GPU multi-policy correctness experiment",
     )
     correctness_parser.add_argument("--config", required=True, help="path to the YAML config")
+    sweep_parser = subparsers.add_parser(
+        "sweep",
+        help="run a single-GPU router-side evaluation sweep",
+    )
+    sweep_parser.add_argument("--config", required=True, help="path to the sweep YAML config")
+    plot_parser = subparsers.add_parser(
+        "plot",
+        help="generate Week 3 figures from aggregated sweep CSV results",
+    )
+    plot_parser.add_argument("--results", required=True, help="path to sweep-results.csv")
+    plot_parser.add_argument("--out", required=True, help="output figures directory")
     return parser
 
 
@@ -195,6 +265,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"correctness_report={report_path}")
         print(json.dumps(_correctness_summary(report), sort_keys=True))
         return 0
+    if args.command == "sweep":
+        definition = load_sweep_config(args.config)
+        runtime = build_sweep_runtime(
+            definition.base_config,
+            definition.points,
+            env_version=capture_environment(definition.base_config),
+        )
+        result = asyncio.run(_run_sweep_runtime(runtime))
+        print(f"sweep_results_csv={result.csv_path}")
+        print(json.dumps(_sweep_summary(result), sort_keys=True))
+        return 0
+    if args.command == "plot":
+        written = plot_sweep_results(args.results, args.out)
+        for path in written:
+            print(f"figure={path}")
+        return 0
     raise AssertionError(f"unhandled command: {args.command}")
 
 
@@ -212,6 +298,17 @@ async def _run_benchmark_runtime(runtime: BenchmarkRuntime) -> BenchmarkResult:
 async def _run_correctness_runtime(runtime: CorrectnessRuntime) -> CorrectnessReport:
     return await run_correctness_experiment(
         config=runtime.config,
+        make_backend=runtime.make_backend,
+        env_version=runtime.env_version,
+        make_gpu_sampler=runtime.make_gpu_sampler,
+        clock=runtime.clock,
+    )
+
+
+async def _run_sweep_runtime(runtime: SweepRuntime) -> SweepResult:
+    return await run_sweep(
+        base_config=runtime.config,
+        points=runtime.points,
         make_backend=runtime.make_backend,
         env_version=runtime.env_version,
         make_gpu_sampler=runtime.make_gpu_sampler,
@@ -244,6 +341,13 @@ def _correctness_summary(report: CorrectnessReport) -> dict[str, object]:
             }
             for policy in report.policies
         ],
+    }
+
+
+def _sweep_summary(result: SweepResult) -> dict[str, object]:
+    return {
+        "points": len(result.rows),
+        "policies": sorted({str(row["policy"]) for row in result.rows}),
     }
 
 

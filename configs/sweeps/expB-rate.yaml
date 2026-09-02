@@ -1,0 +1,36 @@
+# Experiment B: request-rate ladder for all three external router policies.
+base_config: ../base.yaml
+base_overrides:
+  router:
+    max_in_flight: 4
+  workload:
+    request_rate_rps: 0.5
+    total_requests: 60
+    interactive_fraction: 0.5
+    random_seed: 20250825
+    warmup_requests: 5
+    repetitions: 3
+  slo_aware:
+    aging_threshold_s: 3.0
+  metrics:
+    output_directory: results/raw/week3-expB-rate
+
+points:
+  - {label: fcfs-0.5-rps, policy: fcfs, request_rate_rps: 0.5}
+  - {label: static-priority-0.5-rps, policy: static_priority, request_rate_rps: 0.5}
+  - {label: slo-aware-0.5-rps, policy: slo_aware, request_rate_rps: 0.5}
+  - {label: fcfs-1-rps, policy: fcfs, request_rate_rps: 1.0}
+  - {label: static-priority-1-rps, policy: static_priority, request_rate_rps: 1.0}
+  - {label: slo-aware-1-rps, policy: slo_aware, request_rate_rps: 1.0}
+  - {label: fcfs-1.5-rps, policy: fcfs, request_rate_rps: 1.5}
+  - {label: static-priority-1.5-rps, policy: static_priority, request_rate_rps: 1.5}
+  - {label: slo-aware-1.5-rps, policy: slo_aware, request_rate_rps: 1.5}
+  - {label: fcfs-2-rps, policy: fcfs, request_rate_rps: 2.0}
+  - {label: static-priority-2-rps, policy: static_priority, request_rate_rps: 2.0}
+  - {label: slo-aware-2-rps, policy: slo_aware, request_rate_rps: 2.0}
+  - {label: fcfs-3-rps, policy: fcfs, request_rate_rps: 3.0}
+  - {label: static-priority-3-rps, policy: static_priority, request_rate_rps: 3.0}
+  - {label: slo-aware-3-rps, policy: slo_aware, request_rate_rps: 3.0}
+  - {label: fcfs-4-rps, policy: fcfs, request_rate_rps: 4.0}
+  - {label: static-priority-4-rps, policy: static_priority, request_rate_rps: 4.0}
+  - {label: slo-aware-4-rps, policy: slo_aware, request_rate_rps: 4.0}

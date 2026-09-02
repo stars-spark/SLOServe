@@ -39,6 +39,7 @@ def _policy(
     slack_weight: float = 1.0,
     waiting_weight: float = 1.0,
     aging_threshold_s: float = 10.0,
+    disable_length_estimate: bool = False,
 ) -> SloAwarePolicy:
     return SloAwarePolicy(
         SloAwareConfig(
@@ -48,6 +49,7 @@ def _policy(
             slack_weight=slack_weight,
             waiting_weight=waiting_weight,
             aging_threshold_s=aging_threshold_s,
+            disable_length_estimate=disable_length_estimate,
         )
     )
 
@@ -94,6 +96,16 @@ def test_cheaper_request_is_dispatched_first_at_equal_slack() -> None:
     ordered = policy.order([expensive, cheaper], now_s=2.0)
 
     assert [request.request_id for request in ordered] == ["cheap", "expensive"]
+
+
+def test_disabled_length_estimate_removes_cost_and_service_size_signals() -> None:
+    policy = _policy(disable_length_estimate=True)
+    earlier_expensive = _request("earlier-expensive", 0, input_tokens=100, max_output_tokens=20)
+    later_cheap = _request("later-cheap", 1, input_tokens=1, max_output_tokens=1)
+
+    ordered = policy.order([later_cheap, earlier_expensive], now_s=2.0)
+
+    assert [request.request_id for request in ordered] == ["earlier-expensive", "later-cheap"]
 
 
 def test_hard_aging_outranks_fresh_request_with_lower_score() -> None:

@@ -11,6 +11,10 @@ server:
   gpu_memory_utilization: 0.5
   max_model_len: 4096
   max_num_seqs: 16
+  # Experiment D sets these explicitly in separate server configurations.
+  max_num_batched_tokens: null
+  enable_chunked_prefill: null
+  enable_prefix_caching: null
   dtype: bfloat16
   enforce_eager: true
 
@@ -28,6 +32,7 @@ slo_aware:
   slack_weight: 1.0
   waiting_weight: 1.0
   aging_threshold_s: 30.0
+  disable_length_estimate: false
 
 workload:
   arrival_process: fixed

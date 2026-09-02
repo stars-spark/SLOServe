@@ -885,3 +885,46 @@ config_hash 与 metadata 复现。
 
 Week 2 完成(三策略可切换、测试全通过、并发点无明显饥饿、过载点如实记录 static 饥饿)。进入
 Week 3:完整评测(实验 A–E)、每组≥3 重复、吞吐-延迟/速率-P99/SLO 达标率图表、README 与技术报告。
+
+## 2026-09-02 — Week 3 W3-0 评测工具(扫描器 + 出图,尚未跑数)
+
+### 问题与为何需要
+
+Week 3 要跨"负载谱"对比策略,而不是跑单点。已有的 `run_benchmark()` 只能对**一个** (policy, rate)
+产出一份汇总;缺的是**参数扫描 + 跨点聚合 + 自动出图**。本步只搭工具并用合成后端验证,**不碰 GPU、不跑
+真实实验**,因此本节没有任何性能数字——真实 A–E 由后续在单 GPU 上执行后再记录。
+
+### 关键代码
+
+- `src/sloserve/experiments/sweep.py`:`SweepPoint`(label + 受支持的覆盖项:policy / request_rate_rps /
+  interactive_fraction / max_in_flight / aging_threshold_s / cost·slack·waiting 权重 /
+  disable_length_estimate)与 `run_sweep()`。**每点用全新后端**(与 W2-3a 同理:固定种子复用 request_id,
+  共享后端会串遥测),复用 `run_benchmark()`,把每点参数 + MetricsSummary 全部头条指标摊平成一行,写
+  `sweep-results.csv` 和 `.json`(`allow_nan=False`)。每点自身的原始 JSONL/CSV 仍由 run_benchmark 保留。
+- `src/sloserve/analysis/plot_results.py`:懒加载 matplotlib(Agg 无头后端),**只从聚合 CSV** 重生三张图——
+  ①吞吐-延迟(x=token 吞吐, y=端到端 P99)②速率-P99 ③SLO 达标率-速率(总体+分类),每策略一线。满足验收
+  "图表可由原始数据自动生成"。无 pandas 依赖。
+- CLI 新增 `sloserve sweep --config <sweep.yaml>` 与 `sloserve plot --results <csv> --out <dir>`,
+  沿用 benchmark/correctness 的 runtime 工厂(每点新建并关闭 httpx client)。
+- `configs/sweeps/`:expA(3策略@近容量点)、expB(速率阶梯 0.5–4 × 3策略)、expC(interactive 比例
+  0.2/0.5/0.8 × 3策略)、expE(slo_aware 消融:full / no-slack / no-aging(阈值置极大)/ no-length-estimate)。
+
+### 设计决策
+
+- **实验 D 服务端参数**:给 `ServerConfig` 加了可选的 `max_num_batched_tokens` / `enable_chunked_prefill` /
+  `enable_prefix_caching`(默认 None → 不进 serve 命令 → 行为不变),plumb 进 `vllm_serve_args()`。D 因是
+  服务端参数需**每点重起 vllm**,由外层 shell 用一系列独立 base 配置驱动,不进 Python 扫描器。
+- **no-length-estimate 消融**:给 `SloAwareConfig` 加 `disable_length_estimate`(默认 False,保住 W2-2 语义)。
+  开启时 `service_est=0` **且** `cost=0`——即同时移除服务时间估计与整个 token-cost 项(二者主要由输出长度
+  估计驱动);策略退化为"纯 deadline slack + waiting + aging"。报告中须如实写明该点移除的是这两项,而非只
+  移除 service_est。
+
+### 成功信号 / 边界
+
+- 四项检查全绿:`uv lock --check` 通过(matplotlib 仅加入 dev 组,运行时依赖保持精简)、ruff check/format 通过、
+  **pytest 90 passed**(新增 sweep/plot/config/policy 共 9 个测试,含单策略与缺失分类的边界)。
+- 边界:**本步只交付工具,未产出任何实验结果**;A–E 的真实数字待单 GPU 执行后填入,期间不得推测性能。
+
+### 下一步
+
+在单 GPU 上起一次常驻 vllm 跑 A/B/C/E(全路由侧),D 每点重起 vllm;再用 `plot` 出图,落 README 与技术报告。
