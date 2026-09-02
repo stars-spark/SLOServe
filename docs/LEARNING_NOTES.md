@@ -967,3 +967,69 @@ batch、禁用长度估计和全部新 sweep YAML 的加载。开发过程中没
 由具备真实单 GPU 访问的实验编排器运行 A/E 饱和点，并用 B/C refresh 配置替换旧聚合 CSV 中失效的
 `slo_aware` 行；保留不受影响的 `fcfs` / `static_priority` 行和全部失败、负面及原始请求级数据，
 然后从更新后的 CSV 重新生成图表。
+
+## 2026-09-02 — Week 3 完成：完整评测、出图与技术报告
+
+### 要解决的问题
+
+Week 3 需要在真实单 GPU 上完成负载强度、混合比例、策略消融、aging、引擎参数和多 seed 饱和稳健性
+评测，并把请求级事实、聚合 CSV、图表和结论连成可复核证据链。结果必须同时报告吞吐、延迟、SLO、
+公平性、排队和 GPU 状态，不能把某一个有利指标写成策略全面胜出。
+
+### 方法与环境
+
+默认工作负载为固定到达、每次 60 个正式请求、3 次重复、5 个 warmup、seed 20250825、
+`interactive_fraction=0.5`、`max_in_flight=4` 和 `queue_capacity=256`。interactive 输入/输出为
+64–256 / 32–128 tokens，batch 为 512–2048 / 128–512 tokens。环境为单张 NVIDIA GeForce RTX
+4080 Laptop（12282 MiB），driver 580.178.04、CUDA 13.0、torch 2.13.0+cu130、vLLM 0.27.1、
+Python 3.11.14；模型为 Qwen/Qwen3-0.6B revision
+`c1899de289a04d12100db370d81485cdf75e47ca`。运行期间 GPU util 约 55%（peak 61%）、显存 peak
+6136 MiB、功耗 mean 约 77 W。
+
+`sloserve sweep` 保留请求级 JSONL/CSV、completeness report、config hash、环境元数据和聚合
+`sweep-results.csv/json`；`sloserve plot` 与 `scripts/plot_week3_extra.py` 只读保存的 CSV 自动重生
+六张图。所有原始事实保留在 `results/raw/`。
+
+### 关键结果与诚实边界
+
+- 速率扫描显示 token throughput 在 rps=3.0 附近约 430 tok/s 进入平台，排队起点在 rps 1.5 与
+  2.0 之间。rps≤2 时三策略 interactive SLO 均约 1.00。rps=4.0 时 static_priority interactive
+  为 0.85，但 batch 降到 0.72；slo_aware interactive 为 0.32、batch 为 0.99。该图的
+  fcfs/static 行来自初始 session，slo_aware 行来自量纲修正后的 session。
+- rps=3.0、六个独立 seed 的 headline 结果为：fcfs interactive 0.57±0.31、overall
+  0.80±0.14、TTFT P99 4.27±1.66 s、e2e P99 6.86±1.60 s、throughput
+  438±16 tok/s、Jain 0.87±0.15；static_priority 为 0.98±0.01、0.99±0.00、
+  5.28±2.02 s、7.94±2.16 s、433±14 tok/s、1.00±0.00；slo_aware 为
+  0.92±0.07、0.96±0.03、4.03±1.15 s、6.55±1.18 s、446±19 tok/s、
+  1.00±0.01。三策略 batch SLO 均为 1.00。
+- mix 扫描只在 interactive 为少数的 fraction 0.2 明显分化：interactive SLO 为 fcfs 0.48
+  （Jain 0.89）、static 1.00、slo_aware 0.97；fraction 0.5 为 1.00 / 0.97 / 1.00，
+  fraction 0.8 三者均为 1.00。
+- rps=3.0 消融的 interactive SLO 为 full 0.60、no-slack 0.47、no-length-estimate 0.46、
+  no-aging 0.92。去掉 slack 或 shortest-job 项都会降到约 0.46；class-blind hard tier 是饱和下
+  限制 interactive SLO 的部分。
+- aging 3 s / 10 s / 30 s / ∞ 的 interactive SLO 与最长排队分别为 0.85 / 3.86 s、
+  0.97 / 7.07 s、0.96 / 6.44 s、0.88 / 8.25 s。30 s 时最长等待 6.44 s，hard tier 未触发，
+  因而 30 s 与 ∞ 的 dispatch order 应相同；0.96 与 0.88 的约 0.08 差异是 vLLM execution-timing
+  noise，用于校准饱和点噪声底。
+- 单 seed 引擎扫描中，`max_num_seqs=8/16/32` 的 fcfs / slo_aware interactive SLO 分别为
+  0.22 / 0.50、0.19 / 0.55、0.36 / 0.55；`max_num_seqs=16` 开 chunked prefill 为
+  0.12 / 0.77。每种引擎配置下 slo_aware 都领先 fcfs，但细粒度引擎趋势仍在饱和噪声内。
+
+饱和拐点的 run-to-run variance 很高。同一 slo_aware、aging 3 s、rps=3 配置在一个 session 为
+约 0.51/0.55/0.60，在 aging 扫描为 0.85，在多 seed 稳健性实验为 0.92±0.07。固定 seed 只固定
+arrival 与 token count，不固定 vLLM continuous batching 的执行时序。因此方向性结论稳健，绝对
+interactive-SLO 数值有 session 敏感性，任何单次饱和值都不能当成定论。
+
+### 实际结论
+
+低于容量且 mix 平衡时三策略等价；有排队争用时才分化。static_priority 的 interactive SLO 最强且
+最稳定，但 tail latency 最差，并在更深过载时开始饿 batch。fcfs 的 interactive SLO 最差、波动最大且
+公平性最低。slo_aware **不是** interactive-SLO 胜者，而是 latency、throughput、fairness 与
+no-starvation 的平衡选择；其与 static 的剩余 interactive 差距来自 class-blind hard aging。
+
+### 下一步
+
+增加 seed 与独立 session 以收紧饱和点区间；实现 Poisson 到达；评估更大模型、multi-GPU 与
+KV-cache-aware routing；用 learned predictor 替代粗略 token-seconds proxy；把二元 hard tier 改为
+逐级提升、tier 内仍保留 SLO 顺序的 multi-level aging。

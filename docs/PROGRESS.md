@@ -239,6 +239,31 @@ service time remain for W2-2.
 
 Week 2 acceptance met: three policies switch by configuration alone, all tests pass, and the
 concurrent load point shows no obvious request starvation. This is single-GPU correctness
-validation, not a policy-performance comparison. Note: Codex cannot access the GPU
-(`Failed to infer device type`), so the real-GPU runs were executed directly. Next: Week 3 full
+validation, not a policy-performance comparison. Note: the sandboxed build environment cannot
+access the GPU (`Failed to infer device type`), so the real-GPU runs were executed directly. Next: Week 3 full
 evaluation (experiments A–E, throughput–latency / rate–P99 / SLO-attainment charts, report).
+
+## 2026-09-02 — Week 3 complete: full evaluation and write-up
+
+- Completed the single-GPU rate, workload-mix, SLO-aware ablation, aging-threshold,
+  engine-parameter, and six-seed saturation-robustness experiments. Request-level JSONL/CSV,
+  completeness reports, config hashes, environment metadata, and aggregate sweep CSV/JSON remain
+  under `results/raw/`; all six figures are regenerated from saved CSVs.
+- Corrected the SLO-aware dimensional inconsistency found during Week 3: service length is now a
+  seconds-based estimate, `cost_weight` applies to normalized shortest-job service time, and slack
+  is real remaining-time slack. All SLO-aware rows from the first Week 3 session were treated as
+  stale and rerun; FCFS/static-priority rows were unaffected.
+- At rps=3.0 across six independent seeds, interactive SLO was 0.57±0.31 for FCFS,
+  0.98±0.01 for static priority, and 0.92±0.07 for SLO-aware. Corresponding Jain fairness was
+  0.87±0.15, 1.00±0.00, and 1.00±0.01; batch SLO was 1.00 for all three.
+- The honest conclusion is not that SLO-aware wins interactive SLO. Static priority is strongest
+  and most stable there, but has the worst tail latency and begins starving batch at deeper
+  overload. SLO-aware is the balanced choice across tail latency, throughput, fairness, and batch
+  protection; its class-blind hard-aging tier trades bounded waiting against SLO differentiation.
+- Saturation-knee values are session-sensitive because fixed seeds determine workload generation,
+  not nondeterministic vLLM continuous-batching timing. Direction-level conclusions are robust;
+  no individual saturation result is definitive.
+- Added `docs/REPORT.md`, appended Week 3 results and reproduction instructions to `README.md`, and
+  documented limitations: one GPU, one small model, fixed arrivals, no multi-GPU or KV-cache-aware
+  routing, coarse token-seconds length estimates, high saturation variance, and single-seed
+  experiment D.
