@@ -1,0 +1,21 @@
+# Experiment D (mns16): vLLM engine params {'max_num_seqs': 16} at rps=3.0. serve with serve-D-mns16.yaml.
+base_config: serve-D-mns16.yaml
+base_overrides:
+  router:
+    max_in_flight: 4
+  workload:
+    request_rate_rps: 3.0
+    total_requests: 60
+    interactive_fraction: 0.5
+    random_seed: 20250825
+    warmup_requests: 5
+    repetitions: 3
+  slo_aware:
+    aging_threshold_s: 3.0
+  metrics:
+    output_directory: results/raw/week3-expD-mns16
+points:
+- label: fcfs-mns16
+  policy: fcfs
+- label: slo-mns16
+  policy: slo_aware
