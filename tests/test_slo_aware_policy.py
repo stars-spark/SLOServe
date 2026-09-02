@@ -33,8 +33,8 @@ def _request(
 
 def _policy(
     *,
-    input_token_cost: float = 1.0,
-    output_token_cost: float = 2.0,
+    input_token_seconds: float = 1.0,
+    output_token_seconds: float = 2.0,
     cost_weight: float = 1.0,
     slack_weight: float = 1.0,
     waiting_weight: float = 1.0,
@@ -43,8 +43,8 @@ def _policy(
 ) -> SloAwarePolicy:
     return SloAwarePolicy(
         SloAwareConfig(
-            input_token_cost=input_token_cost,
-            output_token_cost=output_token_cost,
+            input_token_seconds=input_token_seconds,
+            output_token_seconds=output_token_seconds,
             cost_weight=cost_weight,
             slack_weight=slack_weight,
             waiting_weight=waiting_weight,
@@ -59,7 +59,13 @@ def test_slo_aware_name_matches_configuration_contract() -> None:
 
 
 def test_slo_aware_priority_key_uses_normalized_score() -> None:
-    policy = _policy(cost_weight=0.5, slack_weight=3.0, waiting_weight=4.0)
+    policy = _policy(
+        input_token_seconds=0.5,
+        output_token_seconds=2.0,
+        cost_weight=0.5,
+        slack_weight=3.0,
+        waiting_weight=4.0,
+    )
     request = _request(
         "scored",
         7,
@@ -71,10 +77,11 @@ def test_slo_aware_priority_key_uses_normalized_score() -> None:
 
     key = policy.priority_key(request, now_s=14.0)
 
-    # budget=20, service=3*2=6, cost=1*4+2*3=10, slack=10, waiting=4;
-    # score=0.5*(10/20) + 3*(10/20) - 4*(4/20) = 0.95.
+    # budget=30-10=20s; service_time=4*0.5+3*2=8s;
+    # slack=30-14-8=8s; waiting=14-10=4s;
+    # score=0.5*(8/20) + 3*(8/20) - 4*(4/20) = 0.6.
     assert key[0] == 1.0
-    assert key[1] == pytest.approx(0.95)
+    assert key[1] == pytest.approx(0.6)
     assert key[2] == float(request.sequence_id)
 
 
@@ -88,24 +95,58 @@ def test_smaller_slack_is_dispatched_first() -> None:
     assert [request.request_id for request in ordered] == ["urgent", "relaxed"]
 
 
-def test_cheaper_request_is_dispatched_first_at_equal_slack() -> None:
-    policy = _policy()
-    cheaper = _request("cheap", 1, input_tokens=2)
-    expensive = _request("expensive", 0, input_tokens=10)
+def test_shorter_estimated_service_is_dispatched_first_by_sjf_term() -> None:
+    policy = _policy(cost_weight=1.0, slack_weight=0.0, waiting_weight=0.0)
+    shorter = _request("shorter", 1, input_tokens=2)
+    longer = _request("longer", 0, input_tokens=10)
 
-    ordered = policy.order([expensive, cheaper], now_s=2.0)
+    ordered = policy.order([longer, shorter], now_s=2.0)
 
-    assert [request.request_id for request in ordered] == ["cheap", "expensive"]
+    assert [request.request_id for request in ordered] == ["shorter", "longer"]
+
+
+def test_interactive_ranks_ahead_of_large_batch_at_equal_waiting() -> None:
+    policy = _policy(input_token_seconds=0.0005, output_token_seconds=0.01)
+    interactive = _request(
+        "interactive",
+        1,
+        input_tokens=128,
+        max_output_tokens=64,
+        deadline_time_s=10.0,
+    )
+    batch = _request(
+        "large-batch",
+        0,
+        input_tokens=1024,
+        max_output_tokens=256,
+        deadline_time_s=120.0,
+    )
+
+    ordered = policy.order([batch, interactive], now_s=2.0)
+
+    # Equal waiting plus the tighter interactive budget produces the lower normalized score.
+    assert [request.request_id for request in ordered] == ["interactive", "large-batch"]
 
 
 def test_disabled_length_estimate_removes_cost_and_service_size_signals() -> None:
-    policy = _policy(disable_length_estimate=True)
+    policy = _policy(
+        cost_weight=2.0,
+        slack_weight=1.0,
+        waiting_weight=1.0,
+        disable_length_estimate=True,
+    )
+    length_aware_policy = _policy(cost_weight=2.0, slack_weight=1.0, waiting_weight=1.0)
     earlier_expensive = _request("earlier-expensive", 0, input_tokens=100, max_output_tokens=20)
     later_cheap = _request("later-cheap", 1, input_tokens=1, max_output_tokens=1)
 
     ordered = policy.order([later_cheap, earlier_expensive], now_s=2.0)
+    length_aware_ordered = length_aware_policy.order([later_cheap, earlier_expensive], now_s=2.0)
 
     assert [request.request_id for request in ordered] == ["earlier-expensive", "later-cheap"]
+    assert [request.request_id for request in length_aware_ordered] == [
+        "later-cheap",
+        "earlier-expensive",
+    ]
 
 
 def test_hard_aging_outranks_fresh_request_with_lower_score() -> None:

@@ -81,10 +81,14 @@ class RouterConfig(StrictModel):
 
 
 class SloAwareConfig(StrictModel):
-    """Configurable coefficients for the future SLO-aware policy."""
+    """Service-time estimates and scoring coefficients for the SLO-aware policy."""
 
-    input_token_cost: float = Field(gt=0)
-    output_token_cost: float = Field(gt=0)
+    input_token_seconds: float = Field(
+        ge=0, description="estimated service time in seconds per input token"
+    )
+    output_token_seconds: float = Field(
+        ge=0, description="estimated service time in seconds per output token"
+    )
     cost_weight: float = Field(ge=0)
     slack_weight: float = Field(ge=0)
     waiting_weight: float = Field(ge=0)

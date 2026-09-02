@@ -7,7 +7,13 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
-from sloserve.config import BackendConfig, ExperimentConfig, TokenRangeConfig, load_config
+from sloserve.config import (
+    BackendConfig,
+    ExperimentConfig,
+    SloAwareConfig,
+    TokenRangeConfig,
+    load_config,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -26,11 +32,28 @@ def test_base_config_loads() -> None:
     assert config.backend.tokenizer_revision == "c1899de289a04d12100db370d81485cdf75e47ca"
     assert config.workload.random_seed == 20250825
     assert config.workload.repetitions == 3
+    assert config.slo_aware.input_token_seconds == 0.0005
+    assert config.slo_aware.output_token_seconds == 0.01
 
 
 def test_token_range_rejects_reversed_bounds() -> None:
     with pytest.raises(ValidationError, match="maximum token count"):
         TokenRangeConfig(minimum=256, maximum=64)
+
+
+def test_slo_aware_service_time_estimates_allow_zero() -> None:
+    config = load_config(PROJECT_ROOT / "configs" / "base.yaml")
+
+    slo_aware = SloAwareConfig.model_validate(
+        {
+            **config.slo_aware.model_dump(),
+            "input_token_seconds": 0.0,
+            "output_token_seconds": 0.0,
+        }
+    )
+
+    assert slo_aware.input_token_seconds == 0.0
+    assert slo_aware.output_token_seconds == 0.0
 
 
 def test_config_loader_rejects_non_mapping(tmp_path: Path) -> None:

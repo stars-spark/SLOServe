@@ -158,9 +158,13 @@ def test_sweep_uses_fresh_backends_applies_overrides_and_round_trips(tmp_path: P
 def test_versioned_sweep_configs_load_expected_matrices() -> None:
     expected_counts = {
         "expA-policy.yaml": 3,
+        "expA-sat.yaml": 3,
         "expB-rate.yaml": 18,
+        "expB-slo.yaml": 6,
         "expC-mix.yaml": 9,
+        "expC-slo.yaml": 3,
         "expE-ablation.yaml": 4,
+        "expE-sat.yaml": 4,
     }
 
     definitions = {
@@ -177,6 +181,13 @@ def test_versioned_sweep_configs_load_expected_matrices() -> None:
     ablations = definitions["expE-ablation.yaml"].points
     no_length = next(point for point in ablations if point.label == "no-length-estimate")
     assert no_length.disable_length_estimate is True
+    for name in ("expA-sat.yaml", "expE-sat.yaml"):
+        assert definitions[name].base_config.workload.request_rate_rps == 3.0
+    assert all(
+        point.policy is SchedulerPolicyName.SLO_AWARE
+        for name in ("expB-slo.yaml", "expC-slo.yaml")
+        for point in definitions[name].points
+    )
 
 
 def test_sweep_cli_parser_and_runtime_factories_are_lazy_and_fresh() -> None:

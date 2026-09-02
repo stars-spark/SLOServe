@@ -928,3 +928,42 @@ Week 3 要跨"负载谱"对比策略,而不是跑单点。已有的 `run_benchma
 ### 下一步
 
 在单 GPU 上起一次常驻 vllm 跑 A/B/C/E(全路由侧),D 每点重起 vllm;再用 `plot` 出图,落 README 与技术报告。
+
+## 2026-09-02 — Week 3 SLO-aware 评分量纲修正与重跑配置
+
+### 问题与为何需要
+
+第一次 Week 3 扫描后复查评分公式，发现 `service_est = max_output_tokens * output_token_cost`
+仍是抽象 cost 单位，却从以秒为单位的 `deadline_time_s - now_s` 中直接相减。这个量纲错误会让
+service estimate 主导 slack，并使按 budget 归一化的 cost 项对短 deadline 请求产生非预期惩罚。
+因此第一次 Week 3 运行中的全部 `slo_aware` 数据已经失效，必须重跑；`fcfs` 和
+`static_priority` 不使用该评分公式，其已有行不受影响。原始实验目录未删除或改写。
+
+### 修正设计与关键代码
+
+- `SloAwareConfig` 将 `input_token_cost` / `output_token_cost` 重命名为
+  `input_token_seconds` / `output_token_seconds`，明确它们是每个 token 的服务时间秒数估计；base
+  配置使用粗略估计，并注明评分经过归一化，不把具体估计值当成实测性能结论。
+- `SloAwarePolicy.priority_key()` 现在先计算
+  `service_time = input_tokens * input_token_seconds + max_output_tokens * output_token_seconds`。
+  `service_time`、`slack = deadline - now - service_time`、waiting 和 budget 均以秒为单位。
+- `cost_weight` 现在权衡 `service_time / budget`，成为归一化 SJF 项；`slack_weight` 权衡真实剩余
+  时间 slack，`waiting_weight` 仍降低已等待请求的分数。epsilon budget guard 与两级硬 aging key
+  保持不变。
+- `disable_length_estimate=true` 时 `service_time=0`，同时移除 SJF 长度项，并使 slack 退化为
+  `deadline - now`，即 EDF + waiting + hard aging。
+- 新增 `expA-sat.yaml`、`expE-sat.yaml` 两个 3.0 rps 饱和点配置，以及只重跑修正后
+  `slo_aware` 行的 `expB-slo.yaml`、`expC-slo.yaml`。所有配置保持固定 seed、warmup、60 个正式
+  请求和至少 3 次重复。
+
+### 成功信号、失败诊断与实际结果
+
+纯 CPU 聚焦测试覆盖手算后的量纲一致分数、SJF 长短任务顺序、相同等待下 interactive 优先于大
+batch、禁用长度估计和全部新 sweep YAML 的加载。开发过程中没有启动 vLLM、访问 GPU 或执行真实
+请求；本步没有新的吞吐、延迟或 SLO 结果，也不作性能改善宣称。
+
+### 下一步
+
+由具备真实单 GPU 访问的实验编排器运行 A/E 饱和点，并用 B/C refresh 配置替换旧聚合 CSV 中失效的
+`slo_aware` 行；保留不受影响的 `fcfs` / `static_priority` 行和全部失败、负面及原始请求级数据，
+然后从更新后的 CSV 重新生成图表。

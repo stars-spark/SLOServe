@@ -23,8 +23,8 @@ router:
   queue_capacity: 256
 
 slo_aware:
-  input_token_cost: 1.0
-  output_token_cost: 4.0
+  input_token_seconds: 0.0005
+  output_token_seconds: 0.01
   cost_weight: 1.0
   slack_weight: 1.0
   waiting_weight: 1.0
