@@ -120,11 +120,62 @@ def engine_params() -> None:
     print("wrote engine-params.png")
 
 
+def multilevel_aging() -> None:
+    """expI multi-seed: interactive SLO and the batch/wait trade as aging levels K grow."""
+    rows = load("results/raw/week4-expI-multiseed/sweep-results.csv")
+    by: dict[int, list[dict[str, str]]] = defaultdict(list)
+    for row in rows:
+        by[int(row["label"].split("-")[0][1:])].append(row)
+    order = [1, 2, 3, 5]
+    labels = [f"K={k}" for k in order]
+
+    def mean_of(column: str) -> list[float]:
+        return [st.mean([float(r[column]) for r in by[k]]) for k in order]
+
+    def std_of(column: str) -> list[float]:
+        return [st.pstdev([float(r[column]) for r in by[k]]) for k in order]
+
+    figure, (left, right) = plt.subplots(1, 2, figsize=(10, 4))
+    x = range(len(order))
+    left.bar(
+        x,
+        mean_of("slo_interactive_rate"),
+        yerr=std_of("slo_interactive_rate"),
+        capsize=6,
+        color=COLORS["slo_aware"],
+    )
+    left.set_xticks(list(x))
+    left.set_xticklabels(labels)
+    left.set_ylabel("Interactive SLO attainment")
+    left.set_ylim(0, 1.05)
+    left.set_title("Interactive SLO vs aging levels (Poisson, rps=3.0)\nmean ± std over 6 seeds")
+    left.grid(axis="y", alpha=0.25)
+
+    wait_color = "#c67f0c"
+    right.plot(x, mean_of("longest_queue_wait_s"), "s--", color=wait_color, label="Longest wait")
+    right.set_ylabel("Longest queue wait (s)", color=wait_color)
+    right.set_xticks(list(x))
+    right.set_xticklabels(labels)
+    right.set_xlabel("Aging levels (K)")
+    twin = right.twinx()
+    twin.plot(x, mean_of("slo_batch_rate"), "o-", color=COLORS["slo_aware"], label="Batch SLO")
+    twin.set_ylabel("Batch SLO attainment", color=COLORS["slo_aware"])
+    right.set_title(
+        "Secondary metrics vs aging levels\nmore tiers: shorter worst-case wait, higher batch SLO"
+    )
+    right.grid(alpha=0.2)
+    figure.tight_layout()
+    figure.savefig(OUT / "multilevel-aging.png", dpi=160)
+    plt.close(figure)
+    print("wrote multilevel-aging.png")
+
+
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     saturation_robustness()
     aging_tradeoff()
     engine_params()
+    multilevel_aging()
 
 
 if __name__ == "__main__":

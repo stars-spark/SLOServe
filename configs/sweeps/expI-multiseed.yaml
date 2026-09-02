@@ -1,0 +1,47 @@
+# Experiment I (multi-seed): graduated aging tiers under Poisson arrivals at the
+# saturated load point (rps=3.0). Single-seed expI could not separate a K effect
+# from the high run-to-run variance measured at saturation (see expG), so each
+# aging_levels setting K in {1,2,3,5} is replayed under the same six independent
+# seeds used by expG. Aggregate per K across the six seeds offline (mean +/- std).
+base_config: ../base.yaml
+base_overrides:
+  router:
+    policy: slo_aware
+    max_in_flight: 4
+  workload:
+    arrival_process: poisson
+    request_rate_rps: 3.0
+    total_requests: 60
+    interactive_fraction: 0.5
+    warmup_requests: 5
+    repetitions: 3
+  slo_aware:
+    aging_threshold_s: 3.0
+  metrics:
+    output_directory: results/raw/week4-expI-multiseed
+
+points:
+  - {label: k1-s1, policy: slo_aware, aging_levels: 1, random_seed: 20250825}
+  - {label: k1-s2, policy: slo_aware, aging_levels: 1, random_seed: 11}
+  - {label: k1-s3, policy: slo_aware, aging_levels: 1, random_seed: 202}
+  - {label: k1-s4, policy: slo_aware, aging_levels: 1, random_seed: 3407}
+  - {label: k1-s5, policy: slo_aware, aging_levels: 1, random_seed: 42}
+  - {label: k1-s6, policy: slo_aware, aging_levels: 1, random_seed: 65537}
+  - {label: k2-s1, policy: slo_aware, aging_levels: 2, random_seed: 20250825}
+  - {label: k2-s2, policy: slo_aware, aging_levels: 2, random_seed: 11}
+  - {label: k2-s3, policy: slo_aware, aging_levels: 2, random_seed: 202}
+  - {label: k2-s4, policy: slo_aware, aging_levels: 2, random_seed: 3407}
+  - {label: k2-s5, policy: slo_aware, aging_levels: 2, random_seed: 42}
+  - {label: k2-s6, policy: slo_aware, aging_levels: 2, random_seed: 65537}
+  - {label: k3-s1, policy: slo_aware, aging_levels: 3, random_seed: 20250825}
+  - {label: k3-s2, policy: slo_aware, aging_levels: 3, random_seed: 11}
+  - {label: k3-s3, policy: slo_aware, aging_levels: 3, random_seed: 202}
+  - {label: k3-s4, policy: slo_aware, aging_levels: 3, random_seed: 3407}
+  - {label: k3-s5, policy: slo_aware, aging_levels: 3, random_seed: 42}
+  - {label: k3-s6, policy: slo_aware, aging_levels: 3, random_seed: 65537}
+  - {label: k5-s1, policy: slo_aware, aging_levels: 5, random_seed: 20250825}
+  - {label: k5-s2, policy: slo_aware, aging_levels: 5, random_seed: 11}
+  - {label: k5-s3, policy: slo_aware, aging_levels: 5, random_seed: 202}
+  - {label: k5-s4, policy: slo_aware, aging_levels: 5, random_seed: 3407}
+  - {label: k5-s5, policy: slo_aware, aging_levels: 5, random_seed: 42}
+  - {label: k5-s6, policy: slo_aware, aging_levels: 5, random_seed: 65537}

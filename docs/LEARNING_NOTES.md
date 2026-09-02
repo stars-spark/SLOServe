@@ -1074,3 +1074,37 @@ ceiling oldest-first。sweep 测试确认覆盖项进入有效配置和聚合行
 
 由具备单 GPU 访问的实验编排器分别运行实验 H 与 I，保留请求级原始数据、GPU 样本、配置和失败运行，
 再同时比较 tail latency、throughput、分类 SLO、最长排队与 fairness；在真实数据产生前不作性能结论。
+
+## 2026-09-02 — Week 4：Poisson × 多级 aging 联合评测（真实 GPU）
+
+### 要解决的问题与为什么需要
+
+Week 4 实现落地后，需要在真实 vLLM 上回答两件事：策略排序在 bursty Poisson 到达下是否仍成立；
+以及“多级 aging 能否保住重载下的 SLO 区分度”这一假设是否被数据支持。后者是 Week 4 这条线是否成立
+的关键。前一轮单种子结果看似显示 K 越大越差，但饱和拐点方差极高（见 expG），单种子不足为凭。
+
+### 方法与命令
+
+- expH：Poisson（rps=3.0，单种子 20250825）下对比 fcfs / static_priority / slo_aware。
+- expI 多种子：`configs/sweeps/expI-multiseed.yaml`，对 `aging_levels` K∈{1,2,3,5} 各用 expG 的
+  同 6 个种子（20250825, 11, 202, 3407, 42, 65537）重放，共 24 点，Poisson rps=3.0。
+  每个 K 在 6 个种子上算 SLO_int / 最长排队 / batch SLO / jain 的 mean±std（`pstdev`）。
+- `uv run sloserve sweep --config configs/sweeps/expI-multiseed.yaml`（37 min，24 行）；
+  离线聚合脚本按 label 前缀解析 K。图由 `scripts/plot_week3_extra.py` 的 `multilevel_aging()` 生成。
+
+### 成功信号、失败诊断与实际结果
+
+- expH：单种子下 static 0.86 / slo_aware 0.28 / fcfs 0.14，排序与固定到达一致，无拒绝、batch SLO 满。
+  仅作方向性确认，绝对值受同样的饱和方差影响。
+- expI 多种子：SLO_int 均值 K=1 0.48±0.20 最高，K=2 0.28±0.13、K=3 0.36±0.23、K=5 0.37±0.23，
+  没有任何 K 超过 K=1。**假设不成立**。各 K 标准差 0.13–0.23，盖过均值差距，因此结论不是“K=1 碾压”，
+  而是“多级 aging 无可辨识的交互 SLO 收益”——单种子看到的 0.41→0.12 主要是噪声，多种子把它坐实。
+- 有连贯的取舍方向：K 增大时最长排队 9.0s→7.6s、batch SLO 0.956→0.991 上升，交互 SLO 与 jain 下降。
+  机制：分级让“等待时间”更早、更频繁地粗粒度压过 SLO 打分，把服务从交互挪向 bounded-wait 与批处理。
+  多级 aging 是“交互紧迫度 ↔ 饥饿上界”的再分配旋钮，不是恢复 SLO 区分度的手段；真正的旋钮仍是
+  ceiling 阈值本身（expF）。
+
+### 下一步
+
+Week 4 这条线以“提出→实现→多种子严谨证伪+机制解释”收尾并写入 REPORT/README。若继续，可换用
+真正影响 SLO 区分度的 ceiling 阈值自适应，或转向 learned 长度预测、多卡路由。

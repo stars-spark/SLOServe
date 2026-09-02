@@ -113,6 +113,20 @@ sweep, and 0.92±0.07 in the robustness study. The fixed seed fixes workload gen
 vLLM continuous-batching timing. Direction-level conclusions are robust; no single-run saturation
 number is definitive.
 
+## Results (Week 4)
+
+Week 4 adds bursty Poisson arrivals and a multi-level generalization of the aging rule. A single
+Poisson session at `rps=3.0` reproduces the Week 3 policy ordering on interactive SLO (static 0.86,
+SLO-aware 0.28, FCFS 0.14). Multi-level aging is then evaluated properly, sweeping aging levels
+K in {1, 2, 3, 5} over six seeds each. It shows **no** interactive-SLO benefit: K=1 (the binary
+policy) is highest at 0.48±0.20 and no larger K improves on it, with the differences inside the
+run-to-run noise. Higher K instead trades interactive urgency for a shorter worst-case wait
+(9.0 s → 7.6 s) and higher batch SLO (0.956 → 0.991). The governing knob for SLO differentiation
+remains the aging threshold, not the number of tiers. Single-seed data would have misread this as a
+real K effect; the multi-seed sweep corrects it.
+
+![Multi-level aging under Poisson arrivals](results/figures/multilevel-aging.png)
+
 ## Reproducing the experiments
 
 Use Python 3.11.14 and the locked development environment:

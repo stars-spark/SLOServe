@@ -218,6 +218,20 @@ among engine configurations.
 
 ![Engine-parameter sensitivity](../results/figures/engine-params.png)
 
+### H. Poisson arrivals (single session)
+
+Sections B–G drive the workload with a fixed inter-arrival schedule. To confirm the policy ordering is not an artifact of evenly spaced arrivals, this section replaces the schedule with a Poisson process (exponential inter-arrival gaps, rate 3.0 rps, seeded) at the saturating load point. A single seeded session reproduces the fixed-arrival ordering on interactive SLO attainment: static priority leads (0.86), SLO-aware is intermediate (0.28), and FCFS trails (0.14), with no rejections and full batch SLO for all three. This is a directional single-session check rather than a multi-seed estimate; the run-to-run variance quantified in section G applies here as well, so the absolute numbers carry the same caution. The ordering, not the magnitudes, is the takeaway.
+
+### I. Multi-level aging (multi-seed)
+
+The hard-aging rule in section F promotes any request past a single waiting threshold into one class-blind, oldest-first tier — the mechanism behind the FCFS degradation at saturation. A natural hypothesis, drawn from multi-level feedback schedulers, is that replacing the single threshold with K graduated age tiers would preserve SLO ordering longer: requests below the ceiling would still be ranked by their SLO score within each tier. We implemented this as a K-level generalization (K=1 exactly reproduces the prior binary policy) and swept K in {1, 2, 3, 5} under Poisson arrivals at rps=3.0, each K replayed over the same six seeds used in section G.
+
+The hypothesis is not supported. Interactive SLO attainment is highest at K=1 (0.48 ± 0.20) and no multi-level setting improves on it (K=2: 0.28 ± 0.13; K=3: 0.36 ± 0.23; K=5: 0.37 ± 0.23). The per-K standard deviations (0.13–0.23) are large relative to the gaps between the means, so the honest reading is not "K=1 wins" but "additional aging tiers provide no measurable interactive-SLO benefit" — the apparent K=1 to K=2 drop seen in a single seed is largely within run-to-run noise, which the multi-seed sweep makes explicit.
+
+The secondary metrics reveal a coherent trade rather than a free lunch. As K grows, the longest queue wait falls (9.0 s at K=1 to 7.6 s at K=5) and batch SLO attainment rises (0.956 to 0.991), while interactive SLO and Jain fairness soften. Graduated tiers make accumulated waiting override the SLO score earlier and more often, redistributing service from interactive requests toward bounded worst-case wait and batch completion. Multi-level aging is therefore a knob that trades interactive urgency for starvation-bound tightness, not a way to recover the SLO differentiation that saturation erases; the lever that actually governs that differentiation remains the ceiling position itself (section F).
+
+![Multi-level aging under Poisson arrivals](../results/figures/multilevel-aging.png)
+
 ## 5. Discussion
 
 ### Balanced-optimum positioning
@@ -240,9 +254,14 @@ Hard aging is intentionally class-blind. That property prevents an old batch req
 permanently displaced by interactive arrivals, but it also overrides the SLO-aware score. The
 ablation and threshold sweep identify `aging_threshold_s` as the main control for trading bounded
 worst-case wait against continued SLO differentiation. A short threshold promotes liveness early;
-a longer threshold preserves the soft score longer but allows larger worst-case waits. A promising
+a longer threshold preserves the soft score longer but allows larger worst-case waits. One natural
 next design is multi-level aging that promotes requests gradually while retaining SLO order within
 each tier.
+
+A multi-level generalization of the aging rule (section I) does not resolve this tension: adding
+graduated age tiers leaves interactive SLO no better than the binary policy and, if anything, shifts
+service toward batch throughput and worst-case wait. This reinforces that the governing knob is the
+ceiling threshold (section F), not the granularity of promotion.
 
 ### Saturation-knee variance
 
