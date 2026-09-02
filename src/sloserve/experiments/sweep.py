@@ -31,6 +31,7 @@ SWEEP_RESULT_COLUMNS = (
     "label",
     "policy",
     "request_rate_rps",
+    "random_seed",
     "interactive_fraction",
     "max_in_flight",
     "aging_threshold_s",
@@ -72,6 +73,7 @@ class SweepPoint(StrictModel):
     label: str = Field(min_length=1)
     policy: SchedulerPolicyName | None = None
     request_rate_rps: float | None = Field(default=None, gt=0)
+    random_seed: int | None = Field(default=None, ge=0)
     interactive_fraction: float | None = Field(default=None, ge=0, le=1)
     max_in_flight: int | None = Field(default=None, ge=1)
     aging_threshold_s: float | None = Field(default=None, gt=0)
@@ -158,6 +160,8 @@ def _config_for_point(base_config: ExperimentConfig, point: SweepPoint) -> Exper
         router_updates["max_in_flight"] = point.max_in_flight
     if point.request_rate_rps is not None:
         workload_updates["request_rate_rps"] = point.request_rate_rps
+    if point.random_seed is not None:
+        workload_updates["random_seed"] = point.random_seed
     if point.interactive_fraction is not None:
         workload_updates["interactive_fraction"] = point.interactive_fraction
     for field_name in (
@@ -191,6 +195,7 @@ def _metric_row(label: str, config: ExperimentConfig, metrics: MetricsSummary) -
         "label": label,
         "policy": config.router.policy.value,
         "request_rate_rps": config.workload.request_rate_rps,
+        "random_seed": config.workload.random_seed,
         "interactive_fraction": config.workload.interactive_fraction,
         "max_in_flight": config.router.max_in_flight,
         "aging_threshold_s": config.slo_aware.aging_threshold_s,

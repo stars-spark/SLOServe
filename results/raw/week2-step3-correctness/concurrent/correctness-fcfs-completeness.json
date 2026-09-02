@@ -3,51 +3,51 @@
   "request_scope": "formal requests only; warmup records are persisted but excluded",
   "metrics": {
     "ttft_p50_s": {
-      "value": 0.046827414000290446,
+      "value": 0.02249803599988809,
       "missing_reason": null
     },
     "ttft_p95_s": {
-      "value": 0.9536431770002309,
+      "value": 0.0674234059988521,
       "missing_reason": null
     },
     "ttft_p99_s": {
-      "value": 1.2185497430000396,
+      "value": 0.225004429999899,
       "missing_reason": null
     },
     "tpot_p50_s": {
-      "value": 0.00961513153097499,
+      "value": 0.007442063999976609,
       "missing_reason": null
     },
     "tpot_p95_s": {
-      "value": 0.009985343932330443,
+      "value": 0.008114724975920504,
       "missing_reason": null
     },
     "tpot_p99_s": {
-      "value": 0.010080241397056799,
+      "value": 0.008168617684245155,
       "missing_reason": null
     },
     "end_to_end_p50_s": {
-      "value": 1.6166686830001709,
+      "value": 1.0059110679994774,
       "missing_reason": null
     },
     "end_to_end_p95_s": {
-      "value": 4.198128967999764,
+      "value": 2.860126023999328,
       "missing_reason": null
     },
     "end_to_end_p99_s": {
-      "value": 4.640041958999973,
+      "value": 3.4777653309993184,
       "missing_reason": null
     },
     "queue_wait_p50_s": {
-      "value": 0.0198304770001414,
+      "value": 0.0006452939996961504,
       "missing_reason": null
     },
     "queue_wait_p95_s": {
-      "value": 0.9256905679994816,
+      "value": 0.044067872999221436,
       "missing_reason": null
     },
     "queue_wait_p99_s": {
-      "value": 1.1904289019994394,
+      "value": 0.20323264699982246,
       "missing_reason": null
     },
     "formal_request_count": {
@@ -55,7 +55,7 @@
       "missing_reason": null
     },
     "token_throughput_per_s": {
-      "value": 325.8358503832345,
+      "value": 334.20394561017895,
       "missing_reason": null
     },
     "success_count": {
@@ -83,7 +83,7 @@
       "missing_reason": null
     },
     "longest_queue_wait_s": {
-      "value": 1.3334742750002988,
+      "value": 0.2712020010003471,
       "missing_reason": null
     },
     "slo_overall": {
@@ -122,8 +122,8 @@
   "gpu": {
     "utilization_percent": {
       "value": {
-        "mean": 44.10050251256281,
-        "peak": 50.0
+        "mean": 55.58974358974359,
+        "peak": 64.0
       },
       "missing_reason": null
     },
@@ -135,8 +135,8 @@
     },
     "power_w": {
       "value": {
-        "mean": 80.14321608040197,
-        "peak": 86.34
+        "mean": 79.28733333333338,
+        "peak": 89.04
       },
       "missing_reason": null
     }

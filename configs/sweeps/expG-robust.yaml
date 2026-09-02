@@ -1,0 +1,39 @@
+# Experiment G: robustness at the saturated load point (rps=3.0).
+# The workload generator is seeded once and each internal repetition replays the SAME workload,
+# so `repetitions` alone captures only server-timing variance. To estimate mean +/- std over BOTH
+# workload and server-timing variance, each of the three policies is run under six independent
+# seeds. Aggregate per policy across the six seeds offline.
+base_config: ../base.yaml
+base_overrides:
+  router:
+    max_in_flight: 4
+  workload:
+    request_rate_rps: 3.0
+    total_requests: 60
+    interactive_fraction: 0.5
+    warmup_requests: 5
+    repetitions: 3
+  slo_aware:
+    aging_threshold_s: 3.0
+  metrics:
+    output_directory: results/raw/week3-expG-robust
+
+points:
+  - {label: fcfs-s1, policy: fcfs, random_seed: 20250825}
+  - {label: static-s1, policy: static_priority, random_seed: 20250825}
+  - {label: slo-s1, policy: slo_aware, random_seed: 20250825}
+  - {label: fcfs-s2, policy: fcfs, random_seed: 11}
+  - {label: static-s2, policy: static_priority, random_seed: 11}
+  - {label: slo-s2, policy: slo_aware, random_seed: 11}
+  - {label: fcfs-s3, policy: fcfs, random_seed: 202}
+  - {label: static-s3, policy: static_priority, random_seed: 202}
+  - {label: slo-s3, policy: slo_aware, random_seed: 202}
+  - {label: fcfs-s4, policy: fcfs, random_seed: 3407}
+  - {label: static-s4, policy: static_priority, random_seed: 3407}
+  - {label: slo-s4, policy: slo_aware, random_seed: 3407}
+  - {label: fcfs-s5, policy: fcfs, random_seed: 42}
+  - {label: static-s5, policy: static_priority, random_seed: 42}
+  - {label: slo-s5, policy: slo_aware, random_seed: 42}
+  - {label: fcfs-s6, policy: fcfs, random_seed: 65537}
+  - {label: static-s6, policy: static_priority, random_seed: 65537}
+  - {label: slo-s6, policy: slo_aware, random_seed: 65537}

@@ -3,51 +3,51 @@
   "request_scope": "formal requests only; warmup records are persisted but excluded",
   "metrics": {
     "ttft_p50_s": {
-      "value": 0.08194786199965165,
+      "value": 0.022598375999223208,
       "missing_reason": null
     },
     "ttft_p95_s": {
-      "value": 1.2889537849996486,
+      "value": 0.07073981999928947,
       "missing_reason": null
     },
     "ttft_p99_s": {
-      "value": 2.36752757999966,
+      "value": 0.4104983599991101,
       "missing_reason": null
     },
     "tpot_p50_s": {
-      "value": 0.009814261037378098,
+      "value": 0.007536431017855907,
       "missing_reason": null
     },
     "tpot_p95_s": {
-      "value": 0.010633008005696479,
+      "value": 0.008374687382811885,
       "missing_reason": null
     },
     "tpot_p99_s": {
-      "value": 0.010864134560744499,
+      "value": 0.00866594718664904,
       "missing_reason": null
     },
     "end_to_end_p50_s": {
-      "value": 1.6311143530001573,
+      "value": 1.0269540389999747,
       "missing_reason": null
     },
     "end_to_end_p95_s": {
-      "value": 4.259476207000262,
+      "value": 2.997985175999929,
       "missing_reason": null
     },
     "end_to_end_p99_s": {
-      "value": 5.350923220000368,
+      "value": 3.3863898429990513,
       "missing_reason": null
     },
     "queue_wait_p50_s": {
-      "value": 0.05196950499976083,
+      "value": 0.0006154589991638204,
       "missing_reason": null
     },
     "queue_wait_p95_s": {
-      "value": 1.2610616150004716,
+      "value": 0.04471603999991203,
       "missing_reason": null
     },
     "queue_wait_p99_s": {
-      "value": 2.336979591000272,
+      "value": 0.3864046579983551,
       "missing_reason": null
     },
     "formal_request_count": {
@@ -55,7 +55,7 @@
       "missing_reason": null
     },
     "token_throughput_per_s": {
-      "value": 323.39309648965644,
+      "value": 330.6721151033673,
       "missing_reason": null
     },
     "success_count": {
@@ -83,30 +83,30 @@
       "missing_reason": null
     },
     "longest_queue_wait_s": {
-      "value": 2.4570702630007872,
+      "value": 0.4979980569987674,
       "missing_reason": null
     },
     "slo_overall": {
       "value": {
         "request_count": 180,
-        "met_count": 178,
-        "rate": 0.9888888888888889
+        "met_count": 180,
+        "rate": 1.0
       },
       "missing_reason": null
     },
     "slo_attainment_gap": {
-      "value": 0.02298850574712641,
+      "value": 0.0,
       "missing_reason": null
     },
     "jain_fairness_index": {
-      "value": 0.9998648100581317,
+      "value": 1.0,
       "missing_reason": null
     },
     "slo_interactive": {
       "value": {
         "request_count": 87,
-        "met_count": 85,
-        "rate": 0.9770114942528736
+        "met_count": 87,
+        "rate": 1.0
       },
       "missing_reason": null
     },
@@ -122,8 +122,8 @@
   "gpu": {
     "utilization_percent": {
       "value": {
-        "mean": 42.91414141414141,
-        "peak": 48.0
+        "mean": 54.326530612244895,
+        "peak": 60.0
       },
       "missing_reason": null
     },
@@ -135,8 +135,8 @@
     },
     "power_w": {
       "value": {
-        "mean": 81.19934343434343,
-        "peak": 87.22
+        "mean": 81.44433673469392,
+        "peak": 89.48
       },
       "missing_reason": null
     }

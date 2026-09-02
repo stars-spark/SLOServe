@@ -1,0 +1,27 @@
+# Experiment F: aging-threshold sweep for slo_aware at the saturated load point (rps=3.0).
+# Traces the liveness (bounded worst-case wait) vs SLO-differentiation trade-off:
+# a larger hard-aging threshold preserves the SLO-aware ordering longer (interactive SLO rises
+# toward static-priority) at the cost of a larger worst-case queue wait. aging=inf disables the
+# hard tier entirely (pure soft score); aging=3.0 is the value used elsewhere in Week 3.
+base_config: ../base.yaml
+base_overrides:
+  router:
+    policy: slo_aware
+    max_in_flight: 4
+  workload:
+    request_rate_rps: 3.0
+    total_requests: 60
+    interactive_fraction: 0.5
+    random_seed: 20250825
+    warmup_requests: 5
+    repetitions: 3
+  slo_aware:
+    aging_threshold_s: 3.0
+  metrics:
+    output_directory: results/raw/week3-expF-aging
+
+points:
+  - {label: aging-3s, policy: slo_aware, aging_threshold_s: 3.0}
+  - {label: aging-10s, policy: slo_aware, aging_threshold_s: 10.0}
+  - {label: aging-30s, policy: slo_aware, aging_threshold_s: 30.0}
+  - {label: aging-inf, policy: slo_aware, aging_threshold_s: 1000000.0}
