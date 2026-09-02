@@ -10,7 +10,7 @@ _EPSILON = 1e-9
 
 
 class SloAwarePolicy(SchedulingPolicy):
-    """Rank requests by normalized service time, slack, waiting time, and hard aging."""
+    """Rank requests by normalized scoring within graduated aging tiers."""
 
     def __init__(self, config: SloAwareConfig) -> None:
         self.input_token_seconds = config.input_token_seconds
@@ -20,6 +20,7 @@ class SloAwarePolicy(SchedulingPolicy):
         self.waiting_weight = config.waiting_weight
         self.aging_threshold_s = config.aging_threshold_s
         self.disable_length_estimate = config.disable_length_estimate
+        self.aging_levels = config.aging_levels
 
     @property
     def name(self) -> str:
@@ -52,6 +53,14 @@ class SloAwarePolicy(SchedulingPolicy):
             - self.waiting_weight * waiting_norm
         )
 
-        if waiting >= self.aging_threshold_s:
+        step = self.aging_threshold_s / self.aging_levels
+        if step <= 0.0:
+            raise ValueError("aging tier step must be positive")
+        age_tier = min(int(waiting // step), self.aging_levels)
+        if age_tier == self.aging_levels:
             return (0.0, request.arrival_time_s, float(request.sequence_id))
-        return (1.0, score, float(request.sequence_id))
+        return (
+            float(self.aging_levels - age_tier),
+            score,
+            float(request.sequence_id),
+        )

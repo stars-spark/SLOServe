@@ -1,0 +1,25 @@
+# Experiment H: three external router policies under seeded Poisson arrivals.
+base_config: ../base.yaml
+base_overrides:
+  router:
+    max_in_flight: 4
+  workload:
+    arrival_process: poisson
+    request_rate_rps: 3.0
+    total_requests: 60
+    interactive_fraction: 0.5
+    random_seed: 20250825
+    warmup_requests: 5
+    repetitions: 3
+  slo_aware:
+    aging_threshold_s: 3.0
+  metrics:
+    output_directory: results/raw/week4-expH-poisson
+
+points:
+  - label: fcfs
+    policy: fcfs
+  - label: static-priority
+    policy: static_priority
+  - label: slo-aware
+    policy: slo_aware

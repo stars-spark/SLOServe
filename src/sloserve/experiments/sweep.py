@@ -39,6 +39,7 @@ SWEEP_RESULT_COLUMNS = (
     "slack_weight",
     "waiting_weight",
     "disable_length_estimate",
+    "aging_levels",
     "request_count",
     "success_count",
     "error_count",
@@ -81,6 +82,7 @@ class SweepPoint(StrictModel):
     slack_weight: float | None = Field(default=None, ge=0)
     waiting_weight: float | None = Field(default=None, ge=0)
     disable_length_estimate: bool | None = None
+    aging_levels: int | None = Field(default=None, ge=1)
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,6 +172,7 @@ def _config_for_point(base_config: ExperimentConfig, point: SweepPoint) -> Exper
         "slack_weight",
         "waiting_weight",
         "disable_length_estimate",
+        "aging_levels",
     ):
         value = getattr(point, field_name)
         if value is not None:
@@ -203,6 +206,7 @@ def _metric_row(label: str, config: ExperimentConfig, metrics: MetricsSummary) -
         "slack_weight": config.slo_aware.slack_weight,
         "waiting_weight": config.slo_aware.waiting_weight,
         "disable_length_estimate": config.slo_aware.disable_length_estimate,
+        "aging_levels": config.slo_aware.aging_levels,
         "request_count": metrics.request_count,
         "success_count": metrics.success_count,
         "error_count": metrics.error_count,

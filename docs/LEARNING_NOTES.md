@@ -1033,3 +1033,44 @@ no-starvation 的平衡选择；其与 static 的剩余 interactive 差距来自
 增加 seed 与独立 session 以收紧饱和点区间；实现 Poisson 到达；评估更大模型、multi-GPU 与
 KV-cache-aware routing；用 learned predictor 替代粗略 token-seconds proxy；把二元 hard tier 改为
 逐级提升、tier 内仍保留 SLO 顺序的 multi-level aging。
+
+## 2026-09-02 — Week 4：Poisson 到达与多级 aging 离线实现
+
+### 要解决的问题与为什么需要
+
+固定速率到达形成规则的 D/D/1 型输入，在低负载与持续过载之间很难稳定制造短时聚集和中等排队。
+同时，原有二元 aging 在阈值处把所有老请求直接放入 class-blind 最高层，虽然保证 liveness，但会突然
+丢失层内的 SLO 顺序。Week 4 的离线实现增加可复现 Poisson 到达，并把阈值以下的 aging 改为多级渐进
+提升，用于后续合并评估到达波动与 aging 粒度。
+
+### 关键代码与设计
+
+- `PoissonArrivalSchedule(request_rate_rps, seed)` 使用独立的 `random.Random(seed)`；首个相对到达时刻
+  固定为 0.0，后续间隔由 `expovariate(request_rate_rps)` 生成并累加。相同 seed 得到相同时间序列，
+  不同 seed 得到不同序列。该 RNG 只属于 arrival schedule，没有消费或改变 `generator.py` 的请求类别
+  与 token 内容 RNG 流。
+- `arrival_schedule_from_config` 现在按 `ArrivalProcess.POISSON` 构造上述 schedule，FIXED 行为保持
+  不变。指数分布间隔允许短时聚集，因此能覆盖固定 D/D/1 输入之外的 bursty 和 moderate-queue
+  regime。
+- `SloAwareConfig.aging_levels` 默认 1。令 `K=aging_levels`、每级宽度
+  `step=aging_threshold_s/K`；阈值以下的请求按等待时间进入渐进 tier，同 tier 内继续用原 SLO score
+  排序。等待达到 `aging_threshold_s` 后仍进入 primary key 为 0.0 的 ceiling，严格按 arrival 和
+  sequence oldest-first。
+- ceiling 没有变化，所以 strict oldest-first bounded-wait guarantee 与 correctness 分析使用的
+  `aging_threshold_s + bound_margin_s` 上界保持有效。`K=1` 精确复现此前二元策略：阈值以下 key 的
+  primary 为 1.0，达到阈值后为 0.0。
+- sweep 聚合新增 `aging_levels` 参数列；`expH-poisson.yaml` 对比 Poisson 下三种策略，
+  `expI-multilevel.yaml` 在同一 3.0 s ceiling 下扫描 1、2、3、5 个 graduated tiers。
+
+### 成功信号、失败诊断与实际结果
+
+纯 CPU 测试覆盖 Poisson 的同 seed 重放、不同 seed 分化、长度与单调性、空/负计数、非法速率和大样本
+平均间隔；aging 测试覆盖 `K=1` 精确 key parity、中间 tier、同 tier 按 score 而非 arrival 排序，以及
+ceiling oldest-first。sweep 测试确认覆盖项进入有效配置和聚合行，两份 Week 4 YAML 可通过现有 loader。
+实现期间没有启动 vLLM、访问 GPU 或发起网络请求。本步没有执行真实实验，也没有吞吐、延迟、SLO 或
+公平性结果可报告。
+
+### 下一步
+
+由具备单 GPU 访问的实验编排器分别运行实验 H 与 I，保留请求级原始数据、GPU 样本、配置和失败运行，
+再同时比较 tail latency、throughput、分类 SLO、最长排队与 fairness；在真实数据产生前不作性能结论。

@@ -94,6 +94,7 @@ class SloAwareConfig(StrictModel):
     waiting_weight: float = Field(ge=0)
     aging_threshold_s: float = Field(gt=0)
     disable_length_estimate: bool = False
+    aging_levels: int = Field(default=1, ge=1)
 
     @model_validator(mode="after")
     def at_least_one_scoring_weight(self) -> SloAwareConfig:

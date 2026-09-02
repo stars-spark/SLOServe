@@ -34,6 +34,8 @@ slo_aware:
   waiting_weight: 1.0
   aging_threshold_s: 30.0
   disable_length_estimate: false
+  # Number of graduated aging tiers; 1 reproduces the original single hard tier.
+  aging_levels: 1
 
 workload:
   arrival_process: fixed

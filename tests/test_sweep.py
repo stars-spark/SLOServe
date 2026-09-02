@@ -14,7 +14,7 @@ import httpx
 import pytest
 
 from sloserve.cli import build_parser, build_sweep_runtime
-from sloserve.config import ExperimentConfig, SchedulerPolicyName, load_config
+from sloserve.config import ArrivalProcess, ExperimentConfig, SchedulerPolicyName, load_config
 from sloserve.experiments.sweep import (
     SWEEP_RESULT_COLUMNS,
     SweepPoint,
@@ -107,6 +107,7 @@ def test_sweep_uses_fresh_backends_applies_overrides_and_round_trips(tmp_path: P
             slack_weight=0.0,
             waiting_weight=3.0,
             disable_length_estimate=True,
+            aging_levels=3,
         ),
     )
 
@@ -134,6 +135,7 @@ def test_sweep_uses_fresh_backends_applies_overrides_and_round_trips(tmp_path: P
     assert result.rows[1]["aging_threshold_s"] == 8.0
     assert result.rows[1]["slack_weight"] == 0.0
     assert result.rows[1]["disable_length_estimate"] is True
+    assert result.rows[1]["aging_levels"] == 3
 
     assert result.csv_path == tmp_path / "sweep-results.csv"
     assert result.json_path == tmp_path / "sweep-results.json"
@@ -165,6 +167,8 @@ def test_versioned_sweep_configs_load_expected_matrices() -> None:
         "expC-slo.yaml": 3,
         "expE-ablation.yaml": 4,
         "expE-sat.yaml": 4,
+        "expH-poisson.yaml": 3,
+        "expI-multilevel.yaml": 4,
     }
 
     definitions = {
@@ -188,6 +192,14 @@ def test_versioned_sweep_configs_load_expected_matrices() -> None:
         for name in ("expB-slo.yaml", "expC-slo.yaml")
         for point in definitions[name].points
     )
+    for name in ("expH-poisson.yaml", "expI-multilevel.yaml"):
+        assert definitions[name].base_config.workload.arrival_process is ArrivalProcess.POISSON
+    assert [point.aging_levels for point in definitions["expI-multilevel.yaml"].points] == [
+        1,
+        2,
+        3,
+        5,
+    ]
 
 
 def test_sweep_cli_parser_and_runtime_factories_are_lazy_and_fresh() -> None:

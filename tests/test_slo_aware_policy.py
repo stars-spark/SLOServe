@@ -40,6 +40,7 @@ def _policy(
     waiting_weight: float = 1.0,
     aging_threshold_s: float = 10.0,
     disable_length_estimate: bool = False,
+    aging_levels: int = 1,
 ) -> SloAwarePolicy:
     return SloAwarePolicy(
         SloAwareConfig(
@@ -50,6 +51,7 @@ def _policy(
             waiting_weight=waiting_weight,
             aging_threshold_s=aging_threshold_s,
             disable_length_estimate=disable_length_estimate,
+            aging_levels=aging_levels,
         )
     )
 
@@ -171,6 +173,97 @@ def test_hard_aging_outranks_fresh_request_with_lower_score() -> None:
     aged_score_without_hard_aging = (1.0 * 100 + 2.0 * 3) / (20.0 - 0.0)
     assert fresh_score < aged_score_without_hard_aging
     assert policy.order([fresh, aged], now_s=now_s)[0] is aged
+
+
+def test_one_aging_level_exactly_matches_binary_keys() -> None:
+    policy = _policy(aging_threshold_s=10.0, aging_levels=1)
+    fresh = _request("fresh", 3, arrival_time_s=1.0, deadline_time_s=21.0)
+    aged = _request("aged", 4, arrival_time_s=0.0, deadline_time_s=20.0)
+
+    fresh_key = policy.priority_key(fresh, now_s=5.0)
+    aged_key = policy.priority_key(aged, now_s=10.0)
+
+    # service=10, budget=20, slack=6, waiting=4, so score=10/20+6/20-4/20=0.6.
+    assert fresh_key[0] == 1.0
+    assert fresh_key[1] == pytest.approx(0.6)
+    assert fresh_key[2] == 3.0
+    assert aged_key == (0.0, 0.0, 4.0)
+
+
+def test_three_aging_levels_assign_intermediate_tier_with_score_secondary() -> None:
+    policy = _policy(aging_threshold_s=12.0, aging_levels=3)
+    request = _request("intermediate", 5, arrival_time_s=0.0, deadline_time_s=20.0)
+
+    key = policy.priority_key(request, now_s=5.0)
+
+    # step=4 and waiting=5 select age tier 1, whose primary key is K-1=2.
+    assert key[0] == 2.0
+    assert key[1] == pytest.approx(0.5)
+    assert key[1] != request.arrival_time_s
+    assert key[2] == 5.0
+
+
+def test_requests_in_same_non_ceiling_tier_order_by_score_not_arrival() -> None:
+    policy = _policy(
+        cost_weight=1.0,
+        slack_weight=0.0,
+        waiting_weight=0.0,
+        aging_threshold_s=12.0,
+        aging_levels=3,
+    )
+    older_longer = _request(
+        "older-longer",
+        0,
+        arrival_time_s=0.0,
+        input_tokens=10,
+        deadline_time_s=20.0,
+    )
+    newer_shorter = _request(
+        "newer-shorter",
+        1,
+        arrival_time_s=1.0,
+        input_tokens=1,
+        deadline_time_s=21.0,
+    )
+
+    ordered = policy.order([older_longer, newer_shorter], now_s=6.0)
+
+    assert [request.request_id for request in ordered] == ["newer-shorter", "older-longer"]
+
+
+def test_multilevel_ceiling_orders_oldest_first_regardless_of_score() -> None:
+    policy = _policy(
+        cost_weight=1.0,
+        slack_weight=0.0,
+        waiting_weight=0.0,
+        aging_threshold_s=12.0,
+        aging_levels=3,
+    )
+    oldest_expensive = _request(
+        "oldest-expensive",
+        1,
+        arrival_time_s=0.0,
+        input_tokens=100,
+        deadline_time_s=30.0,
+    )
+    newer_cheap = _request(
+        "newer-cheap",
+        0,
+        arrival_time_s=1.0,
+        input_tokens=1,
+        deadline_time_s=31.0,
+    )
+
+    oldest_key = policy.priority_key(oldest_expensive, now_s=13.0)
+    newer_key = policy.priority_key(newer_cheap, now_s=13.0)
+    ordered = policy.order([newer_cheap, oldest_expensive], now_s=13.0)
+
+    assert oldest_key[0] == 0.0
+    assert newer_key[0] == 0.0
+    assert [request.request_id for request in ordered] == [
+        "oldest-expensive",
+        "newer-cheap",
+    ]
 
 
 def test_aged_bucket_orders_oldest_first_regardless_of_score() -> None:

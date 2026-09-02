@@ -34,6 +34,7 @@ def test_base_config_loads() -> None:
     assert config.workload.repetitions == 3
     assert config.slo_aware.input_token_seconds == 0.0005
     assert config.slo_aware.output_token_seconds == 0.01
+    assert config.slo_aware.aging_levels == 1
 
 
 def test_token_range_rejects_reversed_bounds() -> None:
