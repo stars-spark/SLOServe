@@ -795,12 +795,12 @@ W2-3b。不修改 vLLM 内部调度、不新增负载结论。
 
 ### 失败与诊断
 
-- **本片发生一次编排事故(已复盘并纠正)**:主控基于一张过期的 `git status` 快照误判"Codex 没有
-  产出",随即自己开始写 `correctness.py`;实际上被委派的 Codex 后台作业此时才刚启动并在并发改
-  同一批文件,造成竞态。发现后:停掉该 Codex 作业(只杀该 job 进程)、以磁盘最终收敛版(Codex 版,
-  比主控草稿更防御)为准、由主控接管收尾。**教训**:委派后要以"进程/文件系统实时状态"而非一次性
-  快照判断从属任务是否在跑;`--wait` 未真正阻塞时,用 companion 的进程/状态而非子 agent 的口头回报。
-- 收敛后跑测试发现 Codex 自带的 `test_no_contention...` 与其实现自相矛盾:它取 `records[:1]`
+- **本片发生一次并发操作事故(已复盘并纠正)**:一次基于过期 `git status` 快照的误判,认为某个
+  后台实现流程"没有产出",随即在主工作副本里开始写 `correctness.py`;实际上那个后台流程此时才刚
+  启动并在并发改同一批文件,造成竞态。发现后:停掉该后台作业(只杀该 job 进程)、以磁盘最终收敛版
+  (更防御的那一版)为准、再接管收尾。**教训**:并发操作时要以"进程/文件系统实时状态"而非一次性
+  快照判断从属任务是否在跑;后台作业未真正阻塞时,用进程/状态而非口头回报来判断。
+- 收敛后跑测试发现随附的 `test_no_contention...` 与其实现自相矛盾:它取 `records[:1]`
   (record 0 的 `enqueue==dispatch`,零宽等待)却断言 `max_queue_depth==1`;而半开区间语义(已被
   `depth==2` 那条通过测试佐证是自洽的)对零宽区间给 0。修法是让单条样例改用**真的等待过**的记录
   `records[1:2]`,使 `depth==1` 名副其实——保留正确的实现,修正选错样例的测试。
@@ -876,8 +876,8 @@ config_hash 与 metadata 复现。
 
 ### 失败与诊断
 
-- Codex 起 vLLM 报 `RuntimeError: Failed to infer device type`——**Codex 沙箱看不到 GPU/CUDA**,
-  真机 serve 只能由有 GPU 访问的 Claude/Bash 做;非 GPU 活(建配置/写文档)仍可委派。
+- 在沙箱构建环境起 vLLM 报 `RuntimeError: Failed to infer device type`——**该沙箱看不到 GPU/CUDA**,
+  真机 serve 只能在有 GPU 访问的环境做;非 GPU 活(建配置/写文档)仍可在沙箱完成。
 - 编排脚本首轮"SERVER DIED"误报:serve.sh 在 exec vllm 前先跑 serve-command+flashinfer 补丁,
   最初几秒 vllm 进程未起,过早的 pgrep 死检查误判。改为纯 `/v1/models` 就绪轮询 + 30s 后才判死,修复。
 

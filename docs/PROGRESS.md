@@ -11,7 +11,7 @@
 - Locked the CPU development environment to managed CPython 3.11.14 and 14 resolved packages.
 - Verified `uv.lock`, Ruff lint, Ruff formatting, the config-check CLI, and 8 pytest tests.
 - Initialized a local Git repository on branch `main`; no commit or remote was created.
-- Added repository-level `AGENTS.md` so Codex sessions on Ubuntu inherit the project boundaries
+- Added repository-level `AGENTS.md` so contributor sessions on Ubuntu inherit the project boundaries
   and validation rules.
 
 No vLLM service or performance experiment has been run yet. Therefore there are no throughput,
