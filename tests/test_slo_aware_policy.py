@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import math
+from pathlib import Path
 
 import pytest
 
-from sloserve.config import SloAwareConfig
+from sloserve.config import LengthSource, SloAwareConfig
 from sloserve.router.models import RequestClass, RequestEnvelope
 from sloserve.router.policies.slo_aware import SloAwarePolicy
+from sloserve.workload.length_predictor import LengthPredictor, LengthTrainingPair
 
 
 def _request(
@@ -19,6 +21,8 @@ def _request(
     input_tokens: int = 4,
     max_output_tokens: int = 3,
     deadline_time_s: float = 20.0,
+    advertised_cap_tokens: int | None = None,
+    prompt_kind: str | None = None,
 ) -> RequestEnvelope:
     return RequestEnvelope(
         request_id=request_id,
@@ -28,6 +32,8 @@ def _request(
         input_tokens=input_tokens,
         max_output_tokens=max_output_tokens,
         deadline_time_s=deadline_time_s,
+        advertised_cap_tokens=advertised_cap_tokens,
+        prompt_kind=prompt_kind,
     )
 
 
@@ -45,6 +51,8 @@ def _policy(
     ceiling_margin: float = 1.5,
     ceiling_floor_s: float = 1.0,
     ceiling_cap_s: float = 15.0,
+    length_source: LengthSource = LengthSource.TRUE,
+    length_estimator_path: str | None = None,
 ) -> SloAwarePolicy:
     return SloAwarePolicy(
         SloAwareConfig(
@@ -60,6 +68,8 @@ def _policy(
             ceiling_margin=ceiling_margin,
             ceiling_floor_s=ceiling_floor_s,
             ceiling_cap_s=ceiling_cap_s,
+            length_source=length_source,
+            length_estimator_path=length_estimator_path,
         )
     )
 
@@ -93,6 +103,73 @@ def test_slo_aware_priority_key_uses_normalized_score() -> None:
     assert key[0] == 1.0
     assert key[1] == pytest.approx(0.6)
     assert key[2] == float(request.sequence_id)
+
+
+def test_true_length_source_reproduces_known_priority_key() -> None:
+    policy = _policy(
+        input_token_seconds=0.5,
+        output_token_seconds=2.0,
+        cost_weight=0.5,
+        slack_weight=3.0,
+        waiting_weight=4.0,
+        length_source=LengthSource.TRUE,
+    )
+    request = _request(
+        "true-source",
+        7,
+        arrival_time_s=10.0,
+        input_tokens=4,
+        max_output_tokens=3,
+        deadline_time_s=30.0,
+        advertised_cap_tokens=100,
+    )
+
+    assert policy.priority_key(request, now_s=14.0) == pytest.approx((1.0, 0.6, 7.0))
+
+
+def test_advertised_length_source_does_not_read_true_target() -> None:
+    policy = _policy(length_source=LengthSource.ADVERTISED)
+    shorter = _request("shorter", 0, max_output_tokens=10, advertised_cap_tokens=2048)
+    longer = _request("longer", 1, max_output_tokens=1000, advertised_cap_tokens=2048)
+
+    assert policy._estimated_output_tokens(shorter) == 2048.0
+    assert policy._estimated_output_tokens(longer) == 2048.0
+    assert _policy()._estimated_output_tokens(shorter) != _policy()._estimated_output_tokens(longer)
+
+
+def test_learned_length_source_uses_loaded_predictor_without_true_target(tmp_path: Path) -> None:
+    predictor = LengthPredictor.train(
+        (
+            LengthTrainingPair(RequestClass.INTERACTIVE, 64, "short", 2048, 100),
+            LengthTrainingPair(RequestClass.INTERACTIVE, 128, "short", 2048, 300),
+            LengthTrainingPair(RequestClass.BATCH, 512, "long", 2048, 900),
+        )
+    )
+    artifact = tmp_path / "predictor.json"
+    predictor.save(artifact)
+    policy = _policy(
+        length_source=LengthSource.LEARNED,
+        length_estimator_path=str(artifact),
+    )
+    shorter = _request(
+        "shorter",
+        0,
+        input_tokens=999,
+        max_output_tokens=10,
+        advertised_cap_tokens=2048,
+        prompt_kind="short",
+    )
+    longer = _request(
+        "longer",
+        1,
+        input_tokens=999,
+        max_output_tokens=1000,
+        advertised_cap_tokens=2048,
+        prompt_kind="short",
+    )
+
+    assert policy._estimated_output_tokens(shorter) == 200.0
+    assert policy._estimated_output_tokens(longer) == 200.0
 
 
 def test_smaller_slack_is_dispatched_first() -> None:

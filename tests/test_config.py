@@ -10,6 +10,9 @@ from pydantic import ValidationError
 from sloserve.config import (
     BackendConfig,
     ExperimentConfig,
+    LengthModel,
+    LengthSource,
+    RealisticLengthConfig,
     SloAwareConfig,
     TokenRangeConfig,
     load_config,
@@ -35,6 +38,10 @@ def test_base_config_loads() -> None:
     assert config.slo_aware.input_token_seconds == 0.0005
     assert config.slo_aware.output_token_seconds == 0.01
     assert config.slo_aware.aging_levels == 1
+    assert config.slo_aware.length_source is LengthSource.TRUE
+    assert config.slo_aware.length_estimator_path is None
+    assert config.workload.length_model is LengthModel.UNIFORM_CAP
+    assert config.workload.realistic_length is None
 
 
 def test_token_range_rejects_reversed_bounds() -> None:
@@ -140,4 +147,29 @@ def test_server_must_admit_router_concurrency() -> None:
     raw["router"]["max_in_flight"] = 16
 
     with pytest.raises(ValidationError, match="max_num_seqs must be >="):
+        ExperimentConfig.model_validate(raw)
+
+
+def test_realistic_length_model_requires_configuration() -> None:
+    raw = _base_config_dict()
+    raw["workload"]["length_model"] = "realistic"
+
+    with pytest.raises(ValidationError, match="requires realistic_length"):
+        ExperimentConfig.model_validate(raw)
+
+
+def test_realistic_length_configuration_validates_mixture_and_clamps() -> None:
+    with pytest.raises(ValidationError, match="equal lengths"):
+        RealisticLengthConfig(kind_fractions=(0.5, 0.5))
+    with pytest.raises(ValidationError, match=r"sum to 1\.0"):
+        RealisticLengthConfig(kind_fractions=(0.4, 0.3, 0.2))
+    with pytest.raises(ValidationError, match="clamp_min"):
+        RealisticLengthConfig(clamp_min=32, clamp_max=16)
+
+
+def test_learned_length_source_requires_estimator_path() -> None:
+    raw = _base_config_dict()
+    raw["slo_aware"]["length_source"] = "learned"
+
+    with pytest.raises(ValidationError, match="requires length_estimator_path"):
         ExperimentConfig.model_validate(raw)

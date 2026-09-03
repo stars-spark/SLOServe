@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import random
 
-from sloserve.config import RequestProfileConfig, WorkloadConfig
+from sloserve.config import LengthModel, RequestProfileConfig, WorkloadConfig
 from sloserve.router.models import RequestClass, RequestEnvelope
 from sloserve.workload.arrivals import ArrivalSchedule, arrival_schedule_from_config
 
@@ -31,21 +31,41 @@ def generate_requests(
     for sequence_id, arrival_time_s in enumerate(arrival_times):
         request_class = _sample_request_class(rng, config.interactive_fraction)
         profile = _profile_for_class(config, request_class)
+        input_tokens = rng.randint(
+            profile.input_tokens.minimum,
+            profile.input_tokens.maximum,
+        )
+        if config.length_model is LengthModel.REALISTIC:
+            realistic = config.realistic_length
+            if realistic is None:
+                raise ValueError("realistic length model requires realistic_length")
+            kind_index = rng.choices(
+                range(len(realistic.kinds)), weights=realistic.kind_fractions, k=1
+            )[0]
+            prompt_kind = realistic.kinds[kind_index]
+            target = round(
+                rng.lognormvariate(realistic.log_mu_by_kind[kind_index], realistic.log_sigma)
+            )
+            max_output_tokens = max(realistic.clamp_min, min(realistic.clamp_max, target))
+            advertised_cap_tokens = realistic.advertised_cap_tokens
+        else:
+            max_output_tokens = rng.randint(
+                profile.output_tokens.minimum,
+                profile.output_tokens.maximum,
+            )
+            advertised_cap_tokens = None
+            prompt_kind = None
         requests.append(
             RequestEnvelope(
                 request_id=f"request-{sequence_id:06d}",
                 sequence_id=sequence_id,
                 request_class=request_class,
                 arrival_time_s=arrival_time_s,
-                input_tokens=rng.randint(
-                    profile.input_tokens.minimum,
-                    profile.input_tokens.maximum,
-                ),
-                max_output_tokens=rng.randint(
-                    profile.output_tokens.minimum,
-                    profile.output_tokens.maximum,
-                ),
+                input_tokens=input_tokens,
+                max_output_tokens=max_output_tokens,
                 deadline_time_s=arrival_time_s + profile.end_to_end_slo_ms / 1000.0,
+                advertised_cap_tokens=advertised_cap_tokens,
+                prompt_kind=prompt_kind,
             )
         )
     return tuple(requests)

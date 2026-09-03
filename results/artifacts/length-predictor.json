@@ -1,0 +1,36 @@
+{
+  "artifact_version": 1,
+  "bucket_medians": [
+    {
+      "median_tokens": 2048.0,
+      "prompt_kind": "long",
+      "request_class": "batch"
+    },
+    {
+      "median_tokens": 1041.5,
+      "prompt_kind": "medium",
+      "request_class": "batch"
+    },
+    {
+      "median_tokens": 503.0,
+      "prompt_kind": "short",
+      "request_class": "batch"
+    },
+    {
+      "median_tokens": 2048.0,
+      "prompt_kind": "long",
+      "request_class": "interactive"
+    },
+    {
+      "median_tokens": 1099.0,
+      "prompt_kind": "medium",
+      "request_class": "interactive"
+    },
+    {
+      "median_tokens": 498.0,
+      "prompt_kind": "short",
+      "request_class": "interactive"
+    }
+  ],
+  "global_median_tokens": 787.0
+}

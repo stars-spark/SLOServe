@@ -14,7 +14,14 @@ import httpx
 import pytest
 
 from sloserve.cli import build_parser, build_sweep_runtime
-from sloserve.config import ArrivalProcess, ExperimentConfig, SchedulerPolicyName, load_config
+from sloserve.config import (
+    ArrivalProcess,
+    ExperimentConfig,
+    LengthModel,
+    LengthSource,
+    SchedulerPolicyName,
+    load_config,
+)
 from sloserve.experiments.sweep import (
     SWEEP_RESULT_COLUMNS,
     SweepPoint,
@@ -107,6 +114,8 @@ def test_sweep_uses_fresh_backends_applies_overrides_and_round_trips(tmp_path: P
             slack_weight=0.0,
             waiting_weight=3.0,
             disable_length_estimate=True,
+            length_source="advertised",
+            length_estimator_path="unused-predictor.json",
             aging_levels=3,
         ),
     )
@@ -135,6 +144,10 @@ def test_sweep_uses_fresh_backends_applies_overrides_and_round_trips(tmp_path: P
     assert result.rows[1]["aging_threshold_s"] == 8.0
     assert result.rows[1]["slack_weight"] == 0.0
     assert result.rows[1]["disable_length_estimate"] is True
+    assert result.rows[1]["length_source"] == LengthSource.ADVERTISED.value
+    assert result.rows[1]["length_estimator_path"] == "unused-predictor.json"
+    assert result.rows[1]["length_model"] == LengthModel.UNIFORM_CAP.value
+    assert result.rows[1]["prompt_kinds"] is None
     assert result.rows[1]["aging_levels"] == 3
 
     assert result.csv_path == tmp_path / "sweep-results.csv"
@@ -169,6 +182,7 @@ def test_versioned_sweep_configs_load_expected_matrices() -> None:
         "expE-sat.yaml": 4,
         "expH-poisson.yaml": 3,
         "expI-multilevel.yaml": 4,
+        "expK-A-length-source.yaml": 18,
     }
 
     definitions = {
@@ -200,6 +214,16 @@ def test_versioned_sweep_configs_load_expected_matrices() -> None:
         3,
         5,
     ]
+    length_source = definitions["expK-A-length-source.yaml"]
+    assert length_source.base_config.workload.length_model is LengthModel.REALISTIC
+    assert length_source.base_config.workload.realistic_length is not None
+    assert [point.length_source for point in length_source.points[:6]] == [LengthSource.TRUE] * 6
+    assert [point.length_source for point in length_source.points[6:12]] == [
+        LengthSource.ADVERTISED
+    ] * 6
+    assert [point.length_source for point in length_source.points[12:]] == [
+        LengthSource.LEARNED
+    ] * 6
 
 
 def test_sweep_cli_parser_and_runtime_factories_are_lazy_and_fresh() -> None:

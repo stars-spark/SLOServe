@@ -1147,3 +1147,50 @@ floor, cap)`,cap 保留有界最坏等待的 liveness 保证。假设:自适应�
 
 自适应 ceiling 这条按「提出→实现→多种子严谨证伪 + 机制解释」收尾。若继续调度层:换更稳的拥塞信号
 (如 EWMA 平滑、按 class 分别定阈)或直接采纳 10–30s 常量;或转向 learned 长度预测、多卡路由。
+
+## 2026-09-03 — Week 6 batch 1：真实重尾长度、长度预测器与估计来源切换
+
+### 要解决的问题与为什么需要
+
+原合成负载把 `max_output_tokens` 同时作为后端生成上限和调度器长度信息，实际输出又通常接近该上限，
+因此 SLO-aware 策略近似提前知道真实长度，不能检验长度信息不完美时的排序效果。本批次把后端目标长度
+与调度可见信息解耦：真实目标仍由 `max_output_tokens` 发送给后端，调度器只按配置读取真实目标、统一
+advertised cap，或由 request class 与粗粒度 prompt kind 预测的长度。所有新增开关默认
+`uniform_cap` / `true`，保留旧工作负载与调度计算路径。
+
+### 关键代码、方法与命令
+
+- `RealisticLengthConfig` 定义 short/medium/long 三成分 log-normal 混合，默认权重
+  0.50/0.35/0.15、各成分 log-mu 6.2/7.0/7.8、共同 sigma 0.7，并把目标钳制到 8–2048 tokens；
+  每个请求同时记录 prompt kind 和 2048-token advertised cap。真实分支只在旧 class/input RNG draw
+  之后额外抽样，`uniform_cap` 分支不消耗新随机数。
+- 长度预测器用 `(request_class, prompt_kind)` 桶内目标中位数和全局中位数 fallback，不引入新运行时
+  依赖。训练命令为 `uv run python scripts/train_length_predictor.py --config
+  configs/sweeps/expK-A-length-source.yaml --train-seed 999 --eval-seed 424242 --n 4000 --out
+  results/artifacts/length-predictor.json`。artifact 只依赖 train-seed 999（与全部六个 expK-A 评测
+  seed 不相交，零泄漏）；held-out MAE 改用与评测集不相交的 seed 424242 报数，避免最初误用 expK-A 的
+  s1 seed 20250825。已核实：换 held-out seed 不改变 artifact（md5 相同），且两种 seed 的 MAE 几乎一致，
+  说明桶中位数预测器是总体统计、对具体 seed 不敏感。
+- SLO-aware 的 `length_source` 支持 true/advertised/learned；learned artifact 在策略构造时加载一次。
+  `disable_length_estimate=true` 仍直接令 service time 为零。expK-A 在 Poisson rps=3.0 饱和点对三种来源
+  各重放六个 seed，共 18 点；本批次只用 loader 验证所有点，没有执行 sweep。
+
+### 成功信号、失败诊断与实际结果
+
+固定 seed 12345 的八请求 parity fixture 保持旧 class/input/output 序列，新增 envelope 字段均为 `None`；
+10,000 请求测试确认三类比例接近配置、每类内部长度有方差，且总体最大值超过中位数两倍。解耦测试用
+相同调度可见特征但不同真实目标，确认 advertised/learned 估计不变而 true 估计变化。配置、artifact
+round-trip、未知桶 fallback、已知 SLO key 回归和 sweep 行字段均有 CPU 测试覆盖。
+
+训练 seed 999、held-out seed 424242、各 4,000 请求时，learned MAE 为 381.33 tokens、Pearson
+corr 为 0.63；统一 2048-token advertised-cap baseline 的 MAE 为 1043.27 tokens、corr 为
+0.000000（learned 约为 naive 的 1/2.7 误差）。artifact 保存了六个桶中位数和全局中位数，可由上述命令重建。配置首次验证失败是 YAML
+把未加引号的 `true` 解析为布尔值；把六个 length-source 值写成字符串后，18 个点全部加载成功。
+最终 lockfile、Ruff lint、Ruff format 和 118 个 pytest 均通过，全程未启动服务、运行 GPU 工作或执行
+`sloserve sweep`。
+
+### 下一步
+
+GPU expK-A 留给 orchestrator 执行；运行时必须保留 18 点的请求级 JSONL/CSV、GPU samples、配置与
+环境元数据，并联合报告吞吐、TTFT、TPOT、P50/P95/P99、分类 SLO、失败/超时、排队公平性和 GPU
+利用率/显存，再判断 learned length source 相对 true 与 advertised 的实际调度取舍。

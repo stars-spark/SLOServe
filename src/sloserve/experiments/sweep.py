@@ -16,7 +16,13 @@ import yaml
 from pydantic import Field
 
 from sloserve.analysis.metrics import MetricsSummary
-from sloserve.config import ExperimentConfig, SchedulerPolicyName, StrictModel, load_config
+from sloserve.config import (
+    ExperimentConfig,
+    LengthSource,
+    SchedulerPolicyName,
+    StrictModel,
+    load_config,
+)
 from sloserve.experiments.benchmark import run_benchmark
 from sloserve.experiments.correctness import BackendFactory, GpuSamplerFactory
 from sloserve.router.models import RequestClass
@@ -39,6 +45,16 @@ SWEEP_RESULT_COLUMNS = (
     "slack_weight",
     "waiting_weight",
     "disable_length_estimate",
+    "length_source",
+    "length_estimator_path",
+    "length_model",
+    "prompt_kinds",
+    "prompt_kind_fractions",
+    "log_mu_by_kind",
+    "log_sigma",
+    "advertised_cap_tokens",
+    "clamp_min",
+    "clamp_max",
     "aging_levels",
     "adaptive_ceiling",
     "ceiling_margin",
@@ -86,6 +102,8 @@ class SweepPoint(StrictModel):
     slack_weight: float | None = Field(default=None, ge=0)
     waiting_weight: float | None = Field(default=None, ge=0)
     disable_length_estimate: bool | None = None
+    length_source: LengthSource | None = None
+    length_estimator_path: str | None = None
     aging_levels: int | None = Field(default=None, ge=1)
     adaptive_ceiling: bool | None = None
     ceiling_margin: float | None = Field(default=None, gt=0)
@@ -180,6 +198,8 @@ def _config_for_point(base_config: ExperimentConfig, point: SweepPoint) -> Exper
         "slack_weight",
         "waiting_weight",
         "disable_length_estimate",
+        "length_source",
+        "length_estimator_path",
         "aging_levels",
         "adaptive_ceiling",
         "ceiling_margin",
@@ -206,6 +226,7 @@ def _config_for_point(base_config: ExperimentConfig, point: SweepPoint) -> Exper
 def _metric_row(label: str, config: ExperimentConfig, metrics: MetricsSummary) -> SweepRow:
     interactive = metrics.slo_by_class.get(RequestClass.INTERACTIVE)
     batch = metrics.slo_by_class.get(RequestClass.BATCH)
+    realistic = config.workload.realistic_length
     return {
         "label": label,
         "policy": config.router.policy.value,
@@ -218,6 +239,20 @@ def _metric_row(label: str, config: ExperimentConfig, metrics: MetricsSummary) -
         "slack_weight": config.slo_aware.slack_weight,
         "waiting_weight": config.slo_aware.waiting_weight,
         "disable_length_estimate": config.slo_aware.disable_length_estimate,
+        "length_source": config.slo_aware.length_source.value,
+        "length_estimator_path": config.slo_aware.length_estimator_path,
+        "length_model": config.workload.length_model.value,
+        "prompt_kinds": json.dumps(realistic.kinds) if realistic is not None else None,
+        "prompt_kind_fractions": (
+            json.dumps(realistic.kind_fractions) if realistic is not None else None
+        ),
+        "log_mu_by_kind": json.dumps(realistic.log_mu_by_kind) if realistic is not None else None,
+        "log_sigma": realistic.log_sigma if realistic is not None else None,
+        "advertised_cap_tokens": (
+            realistic.advertised_cap_tokens if realistic is not None else None
+        ),
+        "clamp_min": realistic.clamp_min if realistic is not None else None,
+        "clamp_max": realistic.clamp_max if realistic is not None else None,
         "aging_levels": config.slo_aware.aging_levels,
         "adaptive_ceiling": config.slo_aware.adaptive_ceiling,
         "ceiling_margin": config.slo_aware.ceiling_margin,

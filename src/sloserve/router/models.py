@@ -24,6 +24,8 @@ class RequestEnvelope:
     input_tokens: int
     max_output_tokens: int
     deadline_time_s: float
+    advertised_cap_tokens: int | None = None
+    prompt_kind: str | None = None
 
     def __post_init__(self) -> None:
         """Reject invalid metadata at the queue boundary."""
@@ -39,3 +41,5 @@ class RequestEnvelope:
             raise ValueError("max_output_tokens must be positive")
         if self.deadline_time_s < self.arrival_time_s:
             raise ValueError("deadline_time_s must not precede arrival_time_s")
+        if self.advertised_cap_tokens is not None and self.advertised_cap_tokens < 1:
+            raise ValueError("advertised_cap_tokens must be positive")

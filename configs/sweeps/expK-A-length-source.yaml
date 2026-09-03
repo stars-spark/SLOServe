@@ -1,0 +1,48 @@
+# Experiment K-A: isolate the SLO-aware estimator's output-length information source under
+# a realistic heavy-tailed workload. The true target is sent to the backend, while prompt kind
+# and a loose advertised cap define the scheduler-visible features. Each source uses the same
+# six independent evaluation seeds; the learned artifact is trained with seed 999.
+base_config: ../base.yaml
+base_overrides:
+  server:
+    gpu_memory_utilization: 0.5
+    max_num_seqs: 16
+  router:
+    policy: slo_aware
+    max_in_flight: 4
+  workload:
+    arrival_process: poisson
+    request_rate_rps: 3.0
+    total_requests: 60
+    interactive_fraction: 0.5
+    warmup_requests: 5
+    repetitions: 3
+    length_model: realistic
+    realistic_length:
+      advertised_cap_tokens: 2048
+      clamp_max: 2048
+  slo_aware:
+    aging_threshold_s: 3.0
+    length_estimator_path: results/artifacts/length-predictor.json
+  metrics:
+    output_directory: results/raw/week6-expK-A
+
+points:
+  - {label: true-s1, length_source: "true", random_seed: 20250825}
+  - {label: true-s2, length_source: "true", random_seed: 11}
+  - {label: true-s3, length_source: "true", random_seed: 202}
+  - {label: true-s4, length_source: "true", random_seed: 3407}
+  - {label: true-s5, length_source: "true", random_seed: 42}
+  - {label: true-s6, length_source: "true", random_seed: 65537}
+  - {label: adv-s1, length_source: advertised, random_seed: 20250825}
+  - {label: adv-s2, length_source: advertised, random_seed: 11}
+  - {label: adv-s3, length_source: advertised, random_seed: 202}
+  - {label: adv-s4, length_source: advertised, random_seed: 3407}
+  - {label: adv-s5, length_source: advertised, random_seed: 42}
+  - {label: adv-s6, length_source: advertised, random_seed: 65537}
+  - {label: learned-s1, length_source: learned, random_seed: 20250825}
+  - {label: learned-s2, length_source: learned, random_seed: 11}
+  - {label: learned-s3, length_source: learned, random_seed: 202}
+  - {label: learned-s4, length_source: learned, random_seed: 3407}
+  - {label: learned-s5, length_source: learned, random_seed: 42}
+  - {label: learned-s6, length_source: learned, random_seed: 65537}

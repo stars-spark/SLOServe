@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
@@ -39,6 +40,21 @@ class ArrivalProcess(StrEnum):
     FIXED = "fixed"
     POISSON = "poisson"
     BURST = "burst"
+
+
+class LengthModel(StrEnum):
+    """Output-length workload models."""
+
+    UNIFORM_CAP = "uniform_cap"
+    REALISTIC = "realistic"
+
+
+class LengthSource(StrEnum):
+    """Output-token estimates available to the SLO-aware policy."""
+
+    TRUE = "true"
+    ADVERTISED = "advertised"
+    LEARNED = "learned"
 
 
 class BackendConfig(StrictModel):
@@ -99,6 +115,8 @@ class SloAwareConfig(StrictModel):
     ceiling_margin: float = Field(default=1.5, gt=0)
     ceiling_floor_s: float = Field(default=1.0, gt=0)
     ceiling_cap_s: float = Field(default=15.0, gt=0)
+    length_source: LengthSource = LengthSource.TRUE
+    length_estimator_path: str | None = None
 
     @model_validator(mode="after")
     def at_least_one_scoring_weight(self) -> SloAwareConfig:
@@ -112,6 +130,13 @@ class SloAwareConfig(StrictModel):
         """Ensure the adaptive-ceiling clamp interval is non-empty."""
         if self.ceiling_floor_s > self.ceiling_cap_s:
             raise ValueError("ceiling floor must not exceed ceiling cap")
+        return self
+
+    @model_validator(mode="after")
+    def learned_length_source_has_estimator(self) -> SloAwareConfig:
+        """Require a serialized predictor for learned length estimates."""
+        if self.length_source is LengthSource.LEARNED and self.length_estimator_path is None:
+            raise ValueError("learned length source requires length_estimator_path")
         return self
 
 
@@ -138,6 +163,33 @@ class RequestProfileConfig(StrictModel):
     end_to_end_slo_ms: float = Field(gt=0)
 
 
+class RealisticLengthConfig(StrictModel):
+    """Heavy-tailed output-length mixture with partially predictive prompt kinds."""
+
+    kinds: tuple[str, ...] = ("short", "medium", "long")
+    kind_fractions: tuple[float, ...] = (0.5, 0.35, 0.15)
+    log_mu_by_kind: tuple[float, ...] = (6.2, 7.0, 7.8)
+    log_sigma: float = Field(default=0.7, gt=0)
+    advertised_cap_tokens: int = Field(default=2048, ge=1)
+    clamp_min: int = Field(default=8, ge=1)
+    clamp_max: int = Field(default=2048, ge=1)
+
+    @model_validator(mode="after")
+    def validate_mixture(self) -> RealisticLengthConfig:
+        """Require aligned mixture parameters and a valid probability distribution."""
+        if not (len(self.kind_fractions) == len(self.kinds) == len(self.log_mu_by_kind)):
+            raise ValueError("kinds, kind_fractions, and log_mu_by_kind must have equal lengths")
+        if any(not kind for kind in self.kinds):
+            raise ValueError("realistic length kinds must not be empty")
+        if any(fraction < 0.0 for fraction in self.kind_fractions):
+            raise ValueError("realistic length kind fractions must be non-negative")
+        if not math.isclose(sum(self.kind_fractions), 1.0, rel_tol=0.0, abs_tol=1e-6):
+            raise ValueError("realistic length kind fractions must sum to 1.0")
+        if self.clamp_min > self.clamp_max:
+            raise ValueError("realistic length clamp_min must not exceed clamp_max")
+        return self
+
+
 class WorkloadConfig(StrictModel):
     """Reproducible workload generation settings."""
 
@@ -150,6 +202,15 @@ class WorkloadConfig(StrictModel):
     repetitions: int = Field(ge=1)
     interactive: RequestProfileConfig
     batch: RequestProfileConfig
+    length_model: LengthModel = LengthModel.UNIFORM_CAP
+    realistic_length: RealisticLengthConfig | None = None
+
+    @model_validator(mode="after")
+    def realistic_model_has_configuration(self) -> WorkloadConfig:
+        """Require mixture parameters only when the realistic model is selected."""
+        if self.length_model is LengthModel.REALISTIC and self.realistic_length is None:
+            raise ValueError("realistic length model requires realistic_length")
+        return self
 
 
 class MetricsConfig(StrictModel):

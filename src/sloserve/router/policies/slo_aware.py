@@ -5,9 +5,10 @@ from __future__ import annotations
 import statistics
 from collections.abc import Iterable, Sequence
 
-from sloserve.config import SloAwareConfig
+from sloserve.config import LengthSource, SloAwareConfig
 from sloserve.router.models import RequestEnvelope
 from sloserve.router.policies.base import SchedulingPolicy
+from sloserve.workload.length_predictor import LengthPredictor
 
 _EPSILON = 1e-9
 
@@ -28,11 +29,34 @@ class SloAwarePolicy(SchedulingPolicy):
         self.ceiling_margin = config.ceiling_margin
         self.ceiling_floor_s = config.ceiling_floor_s
         self.ceiling_cap_s = config.ceiling_cap_s
+        self.length_source = config.length_source
+        self._length_predictor: LengthPredictor | None = None
+        if self.length_source is LengthSource.LEARNED:
+            if config.length_estimator_path is None:
+                raise ValueError("learned length source requires length_estimator_path")
+            self._length_predictor = LengthPredictor.load(config.length_estimator_path)
 
     @property
     def name(self) -> str:
         """Return the policy's configuration name."""
         return "slo_aware"
+
+    def _estimated_output_tokens(self, request: RequestEnvelope) -> float:
+        """Return the output length visible through the configured information boundary."""
+        if self.length_source is LengthSource.TRUE:
+            return float(request.max_output_tokens)
+        if self.length_source is LengthSource.ADVERTISED:
+            return float(request.advertised_cap_tokens or request.max_output_tokens)
+        if self.length_source is LengthSource.LEARNED:
+            if self._length_predictor is None:
+                raise RuntimeError("learned length predictor was not loaded")
+            return self._length_predictor.predict(
+                request.request_class,
+                request.input_tokens,
+                request.prompt_kind,
+                request.advertised_cap_tokens or request.max_output_tokens,
+            )
+        raise ValueError(f"unsupported length source: {self.length_source}")
 
     def _key(
         self, request: RequestEnvelope, now_s: float, threshold: float
@@ -47,7 +71,7 @@ class SloAwarePolicy(SchedulingPolicy):
         else:
             service_time = (
                 self.input_token_seconds * request.input_tokens
-                + self.output_token_seconds * request.max_output_tokens
+                + self.output_token_seconds * self._estimated_output_tokens(request)
             )
         slack = request.deadline_time_s - now_s - service_time
         waiting = now_s - request.arrival_time_s
