@@ -196,6 +196,8 @@ def _place_on_clock(envelope: RequestEnvelope, repetition_start_s: float) -> Req
         input_tokens=envelope.input_tokens,
         max_output_tokens=envelope.max_output_tokens,
         deadline_time_s=repetition_start_s + envelope.deadline_time_s,
+        advertised_cap_tokens=envelope.advertised_cap_tokens,
+        prompt_kind=envelope.prompt_kind,
     )
 
 

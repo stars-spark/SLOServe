@@ -1,151 +1,93 @@
 # SLOServe
 
-SLOServe is an **external admission, queueing, and routing layer in front of vLLM** for
-mixed interactive and batch inference requests. The MVP does not modify vLLM's internal
-token scheduler.
+SLOServe is an **external admission, queueing, and routing layer that sits in front of a real
+vLLM server** for mixed interactive + batch LLM inference. It decides *whether* a request is
+admitted and *in what order* requests are forwarded to the engine — it never modifies vLLM's
+internal token scheduler. This keeps the layer applicable to any OpenAI-compatible engine and
+makes the boundary an honest one: all measured effects come from external ordering, not from
+changing how the engine batches tokens.
 
-The project will compare FCFS, static priority, and SLO-aware scheduling with aging on a
-single GPU before considering any multi-GPU or KV-cache-aware extensions. `PLAN.md` is the
-scope and acceptance source of truth.
+The goal is a single-GPU study of scheduling policy: given the same real engine and workload,
+how do different admission/ordering policies trade off SLO attainment, latency, throughput,
+fairness, and rejection?
 
-## Current status
+## What it does
 
-The repository currently contains the validated project configuration, the common scheduling
-policy interface, and the FCFS ordering primitive. It does **not** yet contain a running router,
-workload generator, vLLM deployment, or performance results.
+- **Three scheduling policies** behind one interface, switched by config:
+  - `fcfs` — first-come-first-served (baseline).
+  - `static_priority` — interactive always ahead of batch, FCFS within a class.
+  - `slo_aware` — a normalized score combining a shortest-job term, deadline **slack** (EDF-style
+    urgency), and accumulated **waiting**, plus a hard **aging** ceiling that guarantees a bounded
+    worst-case wait. Optional multi-level aging and a learned output-length estimate.
+- **Reproducible workloads**: fixed-rate and bursty **Poisson** arrivals; configurable
+  interactive:batch mix and concurrency; a realistic heavy-tailed output-length model (per-kind
+  log-normal mixture) for length-uncertainty studies. Everything is seeded.
+- **Joint metrics**: throughput, TTFT, TPOT, P50/P95/P99 latency, queue waiting, SLO attainment
+  per class, rejection rate, Jain fairness, and GPU utilization/memory — always reported together,
+  so a policy cannot look good by, say, silently dropping hard requests.
+- **A sweep harness** that runs each configuration against a live vLLM endpoint and writes
+  request-level JSONL/CSV, completeness reports, config hashes, environment metadata, and aggregate
+  `sweep-results.csv`/`.json` under `results/raw/`. Every number in this repo is reproducible from
+  that saved data.
 
-## Development setup
+## What was tested, and what was found
 
-Python 3.11 and [`uv`](https://docs.astral.sh/uv/) are required.
+All experiments run on one NVIDIA RTX 4080 Laptop GPU (12 GB) with `Qwen/Qwen3-0.6B` and a pinned
+vLLM 0.27.1 stack. Full methods, session boundaries, and figures are in
+[`docs/REPORT.md`](docs/REPORT.md); the running lab notebook is [`docs/LEARNING_NOTES.md`](docs/LEARNING_NOTES.md).
+Headline saturation numbers use **six independent seeds** and are reported as mean ± std, because
+the saturation knee is run-to-run sensitive (the seed fixes the workload but not vLLM's
+continuous-batching timing).
 
-```bash
-uv sync
-uv run ruff check .
-uv run pytest
-uv run sloserve config-check --config configs/base.yaml
-```
-
-Formal GPU experiments will run under native Ubuntu. vLLM is not supported natively on
-Windows; follow the official [vLLM GPU installation guide](https://docs.vllm.ai/en/latest/getting_started/installation/gpu/)
-after the Ubuntu driver and CUDA environment has been recorded.
-
-## Repository layout
-
-```text
-configs/                  Versioned experiment parameters
-src/sloserve/router/      External request models and policies
-src/sloserve/workload/    Workload generation (planned)
-src/sloserve/experiments/ Experiment runners and sweeps (planned)
-src/sloserve/analysis/    Analysis and plots (planned)
-tests/                    Unit and smoke tests
-results/                  Raw data, processed summaries, and figures
-report/                   Technical report sources
-docs/                     Environment checks and progress log
-```
-
-No performance claim belongs in this repository unless it can be regenerated from committed
-raw JSON/CSV experiment data and a versioned experiment configuration.
-
-The concrete bootstrap sequence and acceptance checks are tracked in
-[`docs/WEEK1.md`](docs/WEEK1.md).
-
-## Results (Week 3)
-
-Week 3 evaluates the external router on one NVIDIA GeForce RTX 4080 Laptop GPU with
-`Qwen/Qwen3-0.6B`. SLOServe does not modify vLLM's internal token scheduler. The complete methods,
-session boundaries, and interpretation are in [`docs/REPORT.md`](docs/REPORT.md).
-
-Below capacity (`rps≤2` with the balanced mix), all three policies are equivalent because little
-or nothing queues. Output-token throughput plateaus around 430 tok/s at `rps=3.0`, and queue onset
-is between `rps=1.5` and `2.0`. The rate-ladder FCFS/static rows are from an initial session; the
-SLO-aware rows are from the post-fix session. At `rps=3.0`, interactive SLO is 0.12 for FCFS, 1.00
-for static priority, and 0.51 for SLO-aware. At `rps=4.0`, the values are 0.09, 0.85, and 0.32;
-static priority's batch SLO falls to 0.72 while SLO-aware retains 0.99.
-
-![Throughput-latency trade-off](results/figures/throughput-latency.png)
-
-![Request rate versus end-to-end P99](results/figures/rate-p99.png)
-
-![SLO attainment versus request rate](results/figures/slo-attainment-rate.png)
-
-The headline robustness experiment uses `rps=3.0`, three policies, and six independent seeds.
-FCFS records interactive SLO 0.57±0.31, overall SLO 0.80±0.14, TTFT P99
-4.27±1.66 s, end-to-end P99 6.86±1.60 s, throughput 438±16 tok/s, and Jain
-0.87±0.15. Static priority records interactive 0.98±0.01, overall 0.99±0.00,
-TTFT P99 5.28±2.02 s, end-to-end P99 7.94±2.16 s, throughput 433±14 tok/s,
-and Jain 1.00±0.00. SLO-aware records interactive 0.92±0.07, overall
-0.96±0.03, TTFT P99 4.03±1.15 s, end-to-end P99 6.55±1.18 s, throughput
-446±19 tok/s, and Jain 1.00±0.01. Batch SLO is 1.00 for all three.
+**Policy comparison at saturation (rps=3.0, 6 seeds).** Static priority has the strongest and most
+stable interactive SLO (0.98 ± 0.01) but the worst tail latency and starves batch under deeper
+overload. FCFS is weakest and most volatile (0.57 ± 0.31). SLO-aware is the **balanced choice**:
+interactive 0.92 ± 0.07 (near static) while also holding the best tail latency, throughput, full
+fairness, and no batch starvation. SLO-aware does **not** beat static priority on interactive SLO —
+it wins on the whole basket, not on that one axis.
 
 ![Saturation robustness](results/figures/saturation-robustness.png)
 
-At `rps=2.0`, differences emerge when interactive requests are the minority. At interactive
-fraction 0.2, interactive SLO is 0.48 for FCFS (Jain 0.89), 1.00 for static priority, and 0.97 for
-SLO-aware. At fraction 0.5 the values are 1.00, 0.97, and 1.00; at fraction 0.8 all three are 1.00.
+![SLO attainment versus request rate](results/figures/slo-attainment-rate.png)
 
-The `rps=3.0` SLO-aware ablation gives interactive SLO 0.60 for the full policy, 0.47 without
-slack, 0.46 without the length estimate, and 0.92 without aging. Removing slack or the normalized
-shortest-job term hurts interactive attainment; disabling aging exposes that the class-blind hard
-tier caps SLO differentiation under saturation.
+**Aging is a real trade-off.** The hard aging ceiling guarantees a bounded worst-case wait, but a
+threshold set below the saturated queue wait promotes *every* request into a class-blind
+oldest-first tier — i.e. SLO-aware quietly degrades to FCFS. The threshold, not the number of
+tiers, is the knob that governs SLO differentiation:
 
-The aging sweep reports interactive SLO / longest queue wait of 0.85 / 3.86 s at 3 s, 0.97 /
-7.07 s at 10 s, 0.96 / 6.44 s at 30 s, and 0.88 / 8.25 s at ∞. At 30 s the tier never fires, so
-the 0.96 versus 0.88 difference from ∞ is pure vLLM execution-timing noise of approximately 0.08.
+- **Multi-level aging (Week 4)** — generalizing the single ceiling to K graduated tiers gives **no**
+  interactive-SLO benefit (K=1 best at 0.48 ± 0.20); more tiers just trade interactive urgency for
+  a shorter worst-case wait and higher batch SLO.
+- **Adaptive ceiling (Week 5)** — floating the threshold on live queue congestion **fails**
+  (interactive SLO 0.39 vs 0.83–0.91 for fixed thresholds). The useful by-product: the default 3 s
+  threshold was simply mis-set — raising it to 10–30 s lifts interactive SLO (0.83 → 0.91) and
+  collapses the run-to-run std (0.25 → 0.08–0.10), explaining most of the earlier "irreducible"
+  saturation variance.
 
 ![Aging threshold trade-off](results/figures/aging-tradeoff.png)
-
-The single-seed engine sweep gives FCFS / SLO-aware interactive SLO of 0.22 / 0.50 at
-`max_num_seqs=8`, 0.19 / 0.55 at `max_num_seqs=16`, 0.36 / 0.55 at
-`max_num_seqs=32`, and 0.12 / 0.77 with chunked prefill enabled at
-`max_num_seqs=16`. SLO-aware leads FCFS for every tested engine configuration, but finer engine
-trends are within saturation noise.
-
-![Engine-parameter sensitivity](results/figures/engine-params.png)
-
-Static priority has the strongest and most stable interactive SLO, but also the worst tail latency
-and batch starvation under deeper overload. SLO-aware does **not** beat static priority on
-interactive SLO. It is the balanced choice across latency, throughput, fairness, and batch
-protection.
-
-The saturation knee is session-sensitive. The same SLO-aware configuration (`aging=3 s`,
-`rps=3.0`) produced interactive SLO approximately 0.51/0.55/0.60 in one session, 0.85 in the aging
-sweep, and 0.92±0.07 in the robustness study. The fixed seed fixes workload generation but not
-vLLM continuous-batching timing. Direction-level conclusions are robust; no single-run saturation
-number is definitive.
-
-## Results (Week 4)
-
-Week 4 adds bursty Poisson arrivals and a multi-level generalization of the aging rule. A single
-Poisson session at `rps=3.0` reproduces the Week 3 policy ordering on interactive SLO (static 0.86,
-SLO-aware 0.28, FCFS 0.14). Multi-level aging is then evaluated properly, sweeping aging levels
-K in {1, 2, 3, 5} over six seeds each. It shows **no** interactive-SLO benefit: K=1 (the binary
-policy) is highest at 0.48±0.20 and no larger K improves on it, with the differences inside the
-run-to-run noise. Higher K instead trades interactive urgency for a shorter worst-case wait
-(9.0 s → 7.6 s) and higher batch SLO (0.956 → 0.991). The governing knob for SLO differentiation
-remains the aging threshold, not the number of tiers. Single-seed data would have misread this as a
-real K effect; the multi-seed sweep corrects it.
-
-![Multi-level aging under Poisson arrivals](results/figures/multilevel-aging.png)
-
-## Results (Week 5)
-
-Week 5 tests whether the aging ceiling threshold — identified in Weeks 3–4 as the knob that governs
-SLO differentiation — should be made adaptive. An adaptive ceiling that floats with live queue
-congestion (`clamp(margin * median_queue_wait, floor, cap)`) is swept against fixed thresholds
-(3 s, 10 s, 30 s) over six seeds under Poisson arrivals. The adaptive ceiling **fails** on both
-axes: interactive SLO 0.39 (adaptive) versus 0.91 (fixed 10–30 s), with a longer worst-case wait —
-floating on the median in-queue wait is a destabilizing signal that Poisson bursts move the wrong
-way. The useful byproduct is about the fixed knob: the 3 s threshold behind the Week-3 saturation
-variance is simply mis-set. Raising it to 10–30 s lifts interactive SLO (0.83 → 0.91) and cuts the
-run-to-run standard deviation from 0.25 to 0.08–0.10 — so much of that "irreducible" variance was a
-knife-edge threshold, not execution-timing noise. The lever is real; the right way to pull it here
-is a calibrated constant, not a controller.
-
 ![Adaptive ceiling versus fixed thresholds](results/figures/adaptive-ceiling.png)
 
-## Reproducing the experiments
+**Output-length estimation (Week 6, in progress).** Under a realistic heavy-tailed output-length
+workload, the SLO-aware service-time estimate can use the true length (`oracle`), a loose constant
+cap (`naive`), or a learned predictor. Accurate length **does** help scheduling — oracle interactive
+SLO 0.74 ± 0.17 beats naive 0.65 ± 0.18 — but a coarse bucket-median predictor does **worst** of all
+(0.51 ± 0.17), below even the naive constant. The lesson: prediction accuracy (MAE) is the wrong
+objective for scheduling — the predictor's *structured* errors mis-order requests, which is worse
+than the naive constant's uniform ignorance. Length awareness helps only with a predictor good
+enough to preserve ordering.
 
-Use Python 3.11.14 and the locked development environment:
+![Length-estimate comparison](results/figures/length-source.png)
+
+Negative and surprising results are kept and explained rather than trimmed; retained raw runs back
+every claim above.
+
+## Environment
+
+RTX 4080 Laptop GPU (12 GB) · `Qwen/Qwen3-0.6B` (revision `c1899de2…`) · vLLM 0.27.1 ·
+torch 2.13.0+cu130 · CPython 3.11.14 · [`uv`](https://docs.astral.sh/uv/). vLLM runs under native
+Ubuntu (not Windows).
+
+## Reproducing the experiments
 
 ```bash
 uv sync
@@ -155,29 +97,39 @@ uv run ruff format --check .
 uv run pytest
 ```
 
-Start the pinned vLLM server separately from a versioned server configuration, then run a
-router-side sweep against that already-running endpoint:
+Start the pinned vLLM server from a versioned server config, then run a router-side sweep against
+that already-running endpoint:
 
 ```bash
 scripts/serve.sh configs/base.yaml
-uv run sloserve sweep --config configs/sweeps/expB-rate.yaml
+uv run sloserve sweep --config configs/sweeps/expG-robust.yaml
 ```
 
-The sweep command writes request-level JSONL/CSV, completeness reports, configuration hashes,
-environment metadata, and aggregate `sweep-results.csv`/`sweep-results.json` under `results/raw/`.
-Use the refresh configurations `expB-slo.yaml` and `expC-slo.yaml` for the corrected SLO-aware
-rows, and `expA-sat.yaml`, `expE-sat.yaml`, `expF-aging.yaml`, and `expG-robust.yaml` for the
-saturation studies. Experiment D changes server-side parameters, so each
-`serve-D-*.yaml`/`expD-*.yaml` pair requires a separate vLLM restart.
-
-Regenerate the standard figures from an aggregate CSV and the additional Week 3 figures from the
-saved sweep CSVs:
+Sweep configs live in [`configs/sweeps/`](configs/sweeps) (e.g. `expG-robust` for the saturation
+robustness study, `expI-multiseed` for multi-level aging, `expJ-adaptive` for the ceiling study,
+`expK-A-length-source` for length estimation). Experiment D changes server-side parameters, so each
+`serve-D-*.yaml` / `expD-*.yaml` pair needs a separate vLLM restart. Regenerate figures from the
+saved aggregate CSVs:
 
 ```bash
 uv run sloserve plot --results results/raw/<experiment>/sweep-results.csv --out results/figures
 uv run python scripts/plot_week3_extra.py
 ```
 
-The figures are auto-generated from raw data: plotting reads the saved aggregate CSVs, which are
-derived from retained request-level facts. Do not compare or merge the stale SLO-aware rows from
-the first Week 3 run; FCFS and static-priority rows from that session are unaffected.
+## Repository layout
+
+```text
+configs/                  Versioned experiment + server + sweep configurations
+src/sloserve/router/      Request models and the scheduling-policy interface + policies
+src/sloserve/workload/    Arrival processes, request generation, length predictor, HTTP backend
+src/sloserve/experiments/ Benchmark runner, correctness/starvation runner, sweep harness
+src/sloserve/analysis/    Metrics aggregation and plotting
+scripts/                  serve.sh and figure regeneration
+results/raw/              Retained per-run request-level data and aggregate CSV/JSON
+results/figures/          Figures regenerated from results/raw/
+docs/                     REPORT.md (technical report), LEARNING_NOTES.md (lab notebook), progress
+tests/                    Unit and smoke tests
+```
+
+No performance claim belongs in this repository unless it can be regenerated from committed raw
+JSON/CSV data and a versioned configuration.

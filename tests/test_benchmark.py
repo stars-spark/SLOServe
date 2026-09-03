@@ -15,6 +15,7 @@ from sloserve.experiments.benchmark import (
     BenchmarkResult,
     GpuSample,
     _gpu_report,
+    _place_on_clock,
     run_benchmark,
 )
 from sloserve.metrics import read_request_records_csv, read_request_records_jsonl
@@ -272,6 +273,32 @@ def test_static_priority_benchmark_admits_later_interactive_before_waiting_batch
         "interactive-waiting",
         "batch-waiting",
     ]
+
+
+def test_place_on_clock_preserves_all_scheduling_fields() -> None:
+    # Regression: the reclocked envelope reaches the scheduler, so dropping the
+    # length-decoupling fields silently turns the advertised/learned length sources
+    # back into the true target. Every field except the two shifted times must survive.
+    envelope = RequestEnvelope(
+        request_id="r0",
+        sequence_id=3,
+        request_class=RequestClass.INTERACTIVE,
+        arrival_time_s=1.0,
+        input_tokens=64,
+        max_output_tokens=1500,
+        deadline_time_s=11.0,
+        advertised_cap_tokens=2048,
+        prompt_kind="long",
+    )
+
+    placed = _place_on_clock(envelope, repetition_start_s=100.0)
+
+    assert placed.advertised_cap_tokens == 2048
+    assert placed.prompt_kind == "long"
+    assert placed.max_output_tokens == 1500
+    assert placed.input_tokens == 64
+    assert placed.arrival_time_s == 101.0
+    assert placed.deadline_time_s == 111.0
 
 
 def test_gpu_report_marks_all_missing_power_explicitly() -> None:

@@ -251,12 +251,12 @@ def length_source_comparison() -> None:
     right.set_xticks(list(x))
     right.set_xticklabels(labels)
     right.set_ylabel("End-to-end latency (s)")
-    right.set_title("Latency by length estimate\naccurate length gives no gain here")
+    right.set_title("Latency by length estimate\noracle lowest, coarse learned highest")
     right.legend()
     right.grid(axis="y", alpha=0.25)
     figure.suptitle(
-        "Accurate output-length estimation does not improve SLO-aware scheduling "
-        "(the slack/deadline term already protects urgency)",
+        "True length (oracle) helps SLO-aware scheduling; a coarse learned predictor "
+        "underperforms even the naive cap (low MAE != good ordering)",
         fontsize=9,
     )
     figure.tight_layout()
