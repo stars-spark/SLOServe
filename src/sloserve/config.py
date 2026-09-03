@@ -95,12 +95,23 @@ class SloAwareConfig(StrictModel):
     aging_threshold_s: float = Field(gt=0)
     disable_length_estimate: bool = False
     aging_levels: int = Field(default=1, ge=1)
+    adaptive_ceiling: bool = False
+    ceiling_margin: float = Field(default=1.5, gt=0)
+    ceiling_floor_s: float = Field(default=1.0, gt=0)
+    ceiling_cap_s: float = Field(default=15.0, gt=0)
 
     @model_validator(mode="after")
     def at_least_one_scoring_weight(self) -> SloAwareConfig:
         """Reject a scoring function that cannot distinguish requests."""
         if self.cost_weight + self.slack_weight + self.waiting_weight == 0:
             raise ValueError("at least one SLO-aware scoring weight must be positive")
+        return self
+
+    @model_validator(mode="after")
+    def ceiling_floor_not_above_cap(self) -> SloAwareConfig:
+        """Ensure the adaptive-ceiling clamp interval is non-empty."""
+        if self.ceiling_floor_s > self.ceiling_cap_s:
+            raise ValueError("ceiling floor must not exceed ceiling cap")
         return self
 
 

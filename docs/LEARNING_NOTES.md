@@ -1108,3 +1108,42 @@ Week 4 实现落地后，需要在真实 vLLM 上回答两件事：策略排序�
 
 Week 4 这条线以“提出→实现→多种子严谨证伪+机制解释”收尾并写入 REPORT/README。若继续，可换用
 真正影响 SLO 区分度的 ceiling 阈值自适应，或转向 learned 长度预测、多卡路由。
+
+## 2026-09-03 — Week 5：自适应 ceiling 阈值（真实 GPU，负面 + 正面副产物）
+
+### 要解决的问题与为什么需要
+
+Week 3–4 反复指向:aging ceiling 的**位置(阈值)**才是掌控重载 SLO 区分度的主旋钮。固定阈值的两难:
+太低(3s)→ 饱和队列整体跌进 class-blind ceiling → 退化成 FCFS(expF);太高 → 轻载时对离群
+请求收得慢。于是提出「自适应 ceiling」:阈值随实时拥塞浮动 `clamp(margin×median_queue_wait,
+floor, cap)`,cap 保留有界最坏等待的 liveness 保证。假设:自适应能在各负载区间都贴近"最佳固定值"。
+
+### 方法与命令
+
+- 新增 `SloAwareConfig.adaptive_ceiling/ceiling_margin/ceiling_floor_s/ceiling_cap_s`(+ floor≤cap
+  校验);`SloAwarePolicy._effective_threshold` 取当前队列等待中位数、`order()` 在自适应开启时按浮动
+  阈值重排;`adaptive_ceiling=False` 精确复现旧固定行为(parity 测试)。
+- `configs/sweeps/expJ-adaptive.yaml`:fix{3,10,30} vs adp-cap{10,30},各 6 种子(同 expG/expI),
+  Poisson rps=3.0,aging_levels=1(隔离阈值效应)。共 30 点。
+  `uv run sloserve sweep --config configs/sweeps/expJ-adaptive.yaml`(42min)。
+- 5 新单测:parity、_effective_threshold 的 floor/cap/scaling 钳制、以及"低固定阈值毁掉的 SLO 顺序
+  被自适应保住"的排序对照。全套 106 pytest 通过,ruff/format 干净。
+
+### 成功信号、失败诊断与实际结果
+
+- **自适应决定性失败**(两轴皆输):interactive SLO adp-cap10 0.39±0.20 / adp-cap30 0.40±0.27,
+  vs fix3 0.83±0.25 / fix10 0.91±0.11 / fix30 0.91±0.08;且自适应最长排队 7.9–8.4s 反而**最长**
+  (固定 5.2–6.1s)。机制(标为对聚合结果的合理解读、非逐次 trace):median-in-queue-wait 是去稳定
+  信号——Poisson 突发注入大量 zero-wait 新请求,恰在突发时把中位数拽低 → 阈值降低 → 中龄请求在最坏
+  时刻涌入 class-blind ceiling;队列整体变老时阈值又升高。阈值与需求反向、排序 thrash → SLO 与尾延迟
+  一起变差。
+- **正面副产物(更有用)**:Week-3 饱和方差的元凶是 3s 阈值**设低了**,不是不可约的执行时序噪声。
+  抬到 10–30s:interactive SLO 0.83→0.91,run-to-run std **0.25→0.08–0.10**。即大部分"高方差"是配置
+  踩在刀刃上(多数请求跨阈成 FCFS、对 dispatch 时序敏感),而非系统固有属性。
+- base.yaml 默认 `aging_threshold_s` 本就是 30(好区间),3s 只是各实验 base_overrides 的选择 → **不
+  改 base**。
+
+### 下一步
+
+自适应 ceiling 这条按「提出→实现→多种子严谨证伪 + 机制解释」收尾。若继续调度层:换更稳的拥塞信号
+(如 EWMA 平滑、按 class 分别定阈)或直接采纳 10–30s 常量;或转向 learned 长度预测、多卡路由。

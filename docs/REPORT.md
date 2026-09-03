@@ -232,6 +232,16 @@ The secondary metrics reveal a coherent trade rather than a free lunch. As K gro
 
 ![Multi-level aging under Poisson arrivals](../results/figures/multilevel-aging.png)
 
+### J. Adaptive ceiling threshold (multi-seed)
+
+Sections F and I both point to the aging ceiling's *position* — not its granularity — as the knob that governs SLO differentiation at saturation. A fixed `aging_threshold_s` cannot be right across load regimes: too low and it swallows the whole saturated queue into the class-blind ceiling (the FCFS degradation of section F); too high and it is slow to bound the worst-case wait at light load. This section tests an adaptive ceiling that floats the threshold with live congestion, `clamp(margin * median_queue_wait, floor, cap)`, against three fixed thresholds (3 s, 10 s, 30 s) under Poisson arrivals at rps=3.0, each variant over the same six seeds. A cap preserves the finite worst-case-wait guarantee.
+
+The adaptive ceiling fails, decisively and on both axes. Interactive SLO attainment is 0.39 ± 0.20 (cap 10 s) and 0.40 ± 0.27 (cap 30 s), against 0.83 ± 0.25 (fixed 3 s), 0.91 ± 0.11 (fixed 10 s), and 0.91 ± 0.08 (fixed 30 s); the adaptive variants also carry the *longest* worst-case waits (7.9–8.4 s versus 5.2–6.1 s for the fixed thresholds). Floating the threshold on the median in-queue wait is a destabilizing signal: Poisson bursts inject fresh, zero-wait requests that pull the median down exactly when a burst arrives, lowering the threshold and dumping mid-aged requests into the class-blind ceiling at the worst moment, while a uniformly aged queue raises it. The threshold thus moves opposite to need and thrashes the ordering, degrading interactive SLO and the tail together. (The mechanism is offered as the plausible reading of the aggregate result, not a per-dispatch trace.)
+
+The sweep's more useful result is a negative-space finding about the fixed knob itself. The 3 s threshold that produced the section-G saturation variance is simply mis-set for this regime: raising it to 10–30 s lifts interactive SLO (0.83 → 0.91) and, more strikingly, collapses the run-to-run standard deviation (0.25 → 0.08–0.10). Much of the Week-3 saturation-knee variance was therefore not irreducible execution-timing noise but a threshold set low enough that most requests aged into the order-erasing ceiling, leaving the outcome hostage to dispatch timing. The lever is real, but the right way to pull it here is a better-calibrated constant, not a congestion-reactive controller.
+
+![Adaptive ceiling versus fixed thresholds](../results/figures/adaptive-ceiling.png)
+
 ## 5. Discussion
 
 ### Balanced-optimum positioning
@@ -261,7 +271,10 @@ each tier.
 A multi-level generalization of the aging rule (section I) does not resolve this tension: adding
 graduated age tiers leaves interactive SLO no better than the binary policy and, if anything, shifts
 service toward batch throughput and worst-case wait. This reinforces that the governing knob is the
-ceiling threshold (section F), not the granularity of promotion.
+ceiling threshold (section F), not the granularity of promotion. Section J then tests whether that
+knob should be made adaptive and finds it should not: a congestion-reactive threshold thrashes and
+loses to a well-set constant on both interactive SLO and worst-case wait. The knob is real; the way
+to set it here is a calibrated constant, not a controller.
 
 ### Saturation-knee variance
 
@@ -272,6 +285,13 @@ times and token counts), but not vLLM's execution timing: continuous batching is
 Direction-level conclusions are robust; exact interactive-SLO values are not. This is why at least
 3 repetitions, multiple seeds, and reporting spread are essential. No single-run saturation number
 should be presented as definitive.**
+
+Section J qualifies this caveat. Much of that variance was not irreducible: at the 3 s threshold most
+requests age into the class-blind ceiling, so the outcome rides on nondeterministic dispatch timing.
+Raising the threshold to 10–30 s cuts the interactive-SLO standard deviation from ~0.25 to ~0.08–0.10.
+The execution-timing nondeterminism is real, but at this operating point a mis-set threshold was the
+larger source of spread — a reminder that "high variance" can be a symptom of a configuration sitting
+on a knife-edge rather than an inherent property of the system.
 
 The conclusions should therefore be read at the level supported by repeated direction: policies
 are equivalent when queues do not form; FCFS becomes weak and volatile under contention; static

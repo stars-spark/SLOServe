@@ -1,0 +1,59 @@
+# Experiment J: adaptive ("congestion-relative") ceiling threshold versus fixed thresholds,
+# at the saturated load point (Poisson rps=3.0). A fixed aging_threshold_s cannot be right
+# across load regimes: too low (3 s) and it swallows the whole saturated queue into the
+# class-blind ceiling (FCFS degradation, see expF); too high (30 s) and it is slow to catch
+# outliers at light load, and unbounded aging would drop the liveness guarantee. The adaptive
+# ceiling floats the threshold with the current queue's median waiting time,
+# clamp(margin * median_wait, floor, cap), keeping a finite worst-case wait via the cap.
+# Each variant is replayed over the same six seeds as expG/expI-multiseed; aggregate per
+# variant across the six seeds offline (mean +/- std). aging_levels is held at 1 to isolate
+# the ceiling-position effect from the graduated-tier effect (which expI found to be neutral).
+base_config: ../base.yaml
+base_overrides:
+  router:
+    policy: slo_aware
+    max_in_flight: 4
+  workload:
+    arrival_process: poisson
+    request_rate_rps: 3.0
+    total_requests: 60
+    interactive_fraction: 0.5
+    warmup_requests: 5
+    repetitions: 3
+  slo_aware:
+    aging_threshold_s: 3.0
+    aging_levels: 1
+  metrics:
+    output_directory: results/raw/week5-expJ-adaptive
+
+points:
+  - {label: fix3-s1, policy: slo_aware, adaptive_ceiling: false, aging_threshold_s: 3.0, random_seed: 20250825}
+  - {label: fix3-s2, policy: slo_aware, adaptive_ceiling: false, aging_threshold_s: 3.0, random_seed: 11}
+  - {label: fix3-s3, policy: slo_aware, adaptive_ceiling: false, aging_threshold_s: 3.0, random_seed: 202}
+  - {label: fix3-s4, policy: slo_aware, adaptive_ceiling: false, aging_threshold_s: 3.0, random_seed: 3407}
+  - {label: fix3-s5, policy: slo_aware, adaptive_ceiling: false, aging_threshold_s: 3.0, random_seed: 42}
+  - {label: fix3-s6, policy: slo_aware, adaptive_ceiling: false, aging_threshold_s: 3.0, random_seed: 65537}
+  - {label: fix10-s1, policy: slo_aware, adaptive_ceiling: false, aging_threshold_s: 10.0, random_seed: 20250825}
+  - {label: fix10-s2, policy: slo_aware, adaptive_ceiling: false, aging_threshold_s: 10.0, random_seed: 11}
+  - {label: fix10-s3, policy: slo_aware, adaptive_ceiling: false, aging_threshold_s: 10.0, random_seed: 202}
+  - {label: fix10-s4, policy: slo_aware, adaptive_ceiling: false, aging_threshold_s: 10.0, random_seed: 3407}
+  - {label: fix10-s5, policy: slo_aware, adaptive_ceiling: false, aging_threshold_s: 10.0, random_seed: 42}
+  - {label: fix10-s6, policy: slo_aware, adaptive_ceiling: false, aging_threshold_s: 10.0, random_seed: 65537}
+  - {label: fix30-s1, policy: slo_aware, adaptive_ceiling: false, aging_threshold_s: 30.0, random_seed: 20250825}
+  - {label: fix30-s2, policy: slo_aware, adaptive_ceiling: false, aging_threshold_s: 30.0, random_seed: 11}
+  - {label: fix30-s3, policy: slo_aware, adaptive_ceiling: false, aging_threshold_s: 30.0, random_seed: 202}
+  - {label: fix30-s4, policy: slo_aware, adaptive_ceiling: false, aging_threshold_s: 30.0, random_seed: 3407}
+  - {label: fix30-s5, policy: slo_aware, adaptive_ceiling: false, aging_threshold_s: 30.0, random_seed: 42}
+  - {label: fix30-s6, policy: slo_aware, adaptive_ceiling: false, aging_threshold_s: 30.0, random_seed: 65537}
+  - {label: adp-cap10-s1, policy: slo_aware, adaptive_ceiling: true, ceiling_margin: 1.5, ceiling_floor_s: 1.0, ceiling_cap_s: 10.0, random_seed: 20250825}
+  - {label: adp-cap10-s2, policy: slo_aware, adaptive_ceiling: true, ceiling_margin: 1.5, ceiling_floor_s: 1.0, ceiling_cap_s: 10.0, random_seed: 11}
+  - {label: adp-cap10-s3, policy: slo_aware, adaptive_ceiling: true, ceiling_margin: 1.5, ceiling_floor_s: 1.0, ceiling_cap_s: 10.0, random_seed: 202}
+  - {label: adp-cap10-s4, policy: slo_aware, adaptive_ceiling: true, ceiling_margin: 1.5, ceiling_floor_s: 1.0, ceiling_cap_s: 10.0, random_seed: 3407}
+  - {label: adp-cap10-s5, policy: slo_aware, adaptive_ceiling: true, ceiling_margin: 1.5, ceiling_floor_s: 1.0, ceiling_cap_s: 10.0, random_seed: 42}
+  - {label: adp-cap10-s6, policy: slo_aware, adaptive_ceiling: true, ceiling_margin: 1.5, ceiling_floor_s: 1.0, ceiling_cap_s: 10.0, random_seed: 65537}
+  - {label: adp-cap30-s1, policy: slo_aware, adaptive_ceiling: true, ceiling_margin: 1.5, ceiling_floor_s: 1.0, ceiling_cap_s: 30.0, random_seed: 20250825}
+  - {label: adp-cap30-s2, policy: slo_aware, adaptive_ceiling: true, ceiling_margin: 1.5, ceiling_floor_s: 1.0, ceiling_cap_s: 30.0, random_seed: 11}
+  - {label: adp-cap30-s3, policy: slo_aware, adaptive_ceiling: true, ceiling_margin: 1.5, ceiling_floor_s: 1.0, ceiling_cap_s: 30.0, random_seed: 202}
+  - {label: adp-cap30-s4, policy: slo_aware, adaptive_ceiling: true, ceiling_margin: 1.5, ceiling_floor_s: 1.0, ceiling_cap_s: 30.0, random_seed: 3407}
+  - {label: adp-cap30-s5, policy: slo_aware, adaptive_ceiling: true, ceiling_margin: 1.5, ceiling_floor_s: 1.0, ceiling_cap_s: 30.0, random_seed: 42}
+  - {label: adp-cap30-s6, policy: slo_aware, adaptive_ceiling: true, ceiling_margin: 1.5, ceiling_floor_s: 1.0, ceiling_cap_s: 30.0, random_seed: 65537}

@@ -41,6 +41,10 @@ def _policy(
     aging_threshold_s: float = 10.0,
     disable_length_estimate: bool = False,
     aging_levels: int = 1,
+    adaptive_ceiling: bool = False,
+    ceiling_margin: float = 1.5,
+    ceiling_floor_s: float = 1.0,
+    ceiling_cap_s: float = 15.0,
 ) -> SloAwarePolicy:
     return SloAwarePolicy(
         SloAwareConfig(
@@ -52,6 +56,10 @@ def _policy(
             aging_threshold_s=aging_threshold_s,
             disable_length_estimate=disable_length_estimate,
             aging_levels=aging_levels,
+            adaptive_ceiling=adaptive_ceiling,
+            ceiling_margin=ceiling_margin,
+            ceiling_floor_s=ceiling_floor_s,
+            ceiling_cap_s=ceiling_cap_s,
         )
     )
 
@@ -299,6 +307,79 @@ def test_sequence_id_deterministically_breaks_identical_score_ties() -> None:
     ordered = policy.order([second, first], now_s=2.0)
 
     assert [request.sequence_id for request in ordered] == [2, 5]
+
+
+def test_adaptive_ceiling_disabled_matches_fixed_priority_key_order() -> None:
+    policy = _policy(adaptive_ceiling=False)
+    oldest_expensive = _request(
+        "oldest-expensive", 1, arrival_time_s=0.0, input_tokens=100, deadline_time_s=30.0
+    )
+    newer_cheap = _request(
+        "newer-cheap", 0, arrival_time_s=1.0, input_tokens=1, deadline_time_s=31.0
+    )
+    queue = [newer_cheap, oldest_expensive]
+
+    ordered = policy.order(queue, now_s=12.0)
+    fixed = sorted(queue, key=lambda request: policy.priority_key(request, now_s=12.0))
+
+    assert [r.request_id for r in ordered] == [r.request_id for r in fixed]
+
+
+def test_effective_threshold_clamps_to_floor_when_queue_is_fresh() -> None:
+    policy = _policy(adaptive_ceiling=True, ceiling_margin=1.5, ceiling_floor_s=1.0)
+    assert policy._effective_threshold([0.0, 0.0, 0.0]) == pytest.approx(1.0)
+
+
+def test_effective_threshold_clamps_to_cap_under_heavy_congestion() -> None:
+    policy = _policy(adaptive_ceiling=True, ceiling_margin=1.5, ceiling_cap_s=15.0)
+    assert policy._effective_threshold([100.0, 100.0]) == pytest.approx(15.0)
+
+
+def test_effective_threshold_scales_with_median_wait_inside_the_clamp() -> None:
+    policy = _policy(
+        adaptive_ceiling=True, ceiling_margin=1.5, ceiling_floor_s=1.0, ceiling_cap_s=30.0
+    )
+    # median([2, 4, 12]) = 4, 1.5 * 4 = 6, inside [1, 30].
+    assert policy._effective_threshold([2.0, 4.0, 12.0]) == pytest.approx(6.0)
+
+
+def test_adaptive_ceiling_preserves_slo_order_that_a_low_fixed_threshold_destroys() -> None:
+    # cost/waiting off: score = slack / budget, so a near-deadline request is most urgent.
+    kwargs = dict(cost_weight=0.0, slack_weight=1.0, waiting_weight=0.0, aging_levels=1)
+    old_a = _request(
+        "old-a", 0, arrival_time_s=0.0, input_tokens=10, max_output_tokens=3, deadline_time_s=60.0
+    )
+    old_b = _request(
+        "old-b", 1, arrival_time_s=0.0, input_tokens=10, max_output_tokens=3, deadline_time_s=60.0
+    )
+    fresh = _request(
+        "fresh-urgent",
+        2,
+        arrival_time_s=5.0,
+        input_tokens=1,
+        max_output_tokens=1,
+        deadline_time_s=8.0,
+    )
+    queue = [old_a, old_b, fresh]
+
+    fixed = _policy(aging_threshold_s=3.0, **kwargs)
+    adaptive = _policy(
+        aging_threshold_s=3.0,
+        adaptive_ceiling=True,
+        ceiling_margin=1.5,
+        ceiling_floor_s=1.0,
+        ceiling_cap_s=30.0,
+        **kwargs,
+    )
+
+    fixed_order = [r.request_id for r in fixed.order(queue, now_s=5.0)]
+    adaptive_order = [r.request_id for r in adaptive.order(queue, now_s=5.0)]
+
+    # Fixed low threshold ages both old requests into the class-blind ceiling ahead of the
+    # fresh, most-urgent interactive request; the adaptive ceiling floats up (median wait 5,
+    # threshold 7.5) so nothing is aged and the urgent request is ranked first by its score.
+    assert fixed_order[0] in {"old-a", "old-b"}
+    assert adaptive_order[0] == "fresh-urgent"
 
 
 def test_zero_budget_is_guarded_and_returns_finite_key() -> None:

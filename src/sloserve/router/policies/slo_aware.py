@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import statistics
+from collections.abc import Iterable, Sequence
+
 from sloserve.config import SloAwareConfig
 from sloserve.router.models import RequestEnvelope
 from sloserve.router.policies.base import SchedulingPolicy
@@ -21,14 +24,20 @@ class SloAwarePolicy(SchedulingPolicy):
         self.aging_threshold_s = config.aging_threshold_s
         self.disable_length_estimate = config.disable_length_estimate
         self.aging_levels = config.aging_levels
+        self.adaptive_ceiling = config.adaptive_ceiling
+        self.ceiling_margin = config.ceiling_margin
+        self.ceiling_floor_s = config.ceiling_floor_s
+        self.ceiling_cap_s = config.ceiling_cap_s
 
     @property
     def name(self) -> str:
         """Return the policy's configuration name."""
         return "slo_aware"
 
-    def priority_key(self, request: RequestEnvelope, *, now_s: float) -> tuple[float | int, ...]:
-        """Return a normalized score key with an absolute aged-request tier."""
+    def _key(
+        self, request: RequestEnvelope, now_s: float, threshold: float
+    ) -> tuple[float | int, ...]:
+        """Return the normalized score key for a request under a given aging threshold."""
         budget = request.deadline_time_s - request.arrival_time_s
         if budget <= 0.0:
             budget = _EPSILON
@@ -53,7 +62,7 @@ class SloAwarePolicy(SchedulingPolicy):
             - self.waiting_weight * waiting_norm
         )
 
-        step = self.aging_threshold_s / self.aging_levels
+        step = threshold / self.aging_levels
         if step <= 0.0:
             raise ValueError("aging tier step must be positive")
         age_tier = min(int(waiting // step), self.aging_levels)
@@ -64,3 +73,23 @@ class SloAwarePolicy(SchedulingPolicy):
             score,
             float(request.sequence_id),
         )
+
+    def priority_key(self, request: RequestEnvelope, *, now_s: float) -> tuple[float | int, ...]:
+        """Return a normalized score key with a fixed absolute aged-request tier."""
+        return self._key(request, now_s, self.aging_threshold_s)
+
+    def _effective_threshold(self, waits: Sequence[float]) -> float:
+        """Clamp a congestion-relative ceiling from the current waiting-time distribution."""
+        congestion = statistics.median(waits)
+        return min(self.ceiling_cap_s, max(self.ceiling_floor_s, self.ceiling_margin * congestion))
+
+    def order(self, requests: Iterable[RequestEnvelope], *, now_s: float) -> list[RequestEnvelope]:
+        """Order requests, floating the aging ceiling with queue congestion when enabled."""
+        if not self.adaptive_ceiling:
+            return super().order(requests, now_s=now_s)
+        materialized = list(requests)
+        if not materialized:
+            return []
+        waits = [now_s - request.arrival_time_s for request in materialized]
+        threshold = self._effective_threshold(waits)
+        return sorted(materialized, key=lambda request: self._key(request, now_s, threshold))

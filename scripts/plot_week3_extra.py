@@ -170,12 +170,54 @@ def multilevel_aging() -> None:
     print("wrote multilevel-aging.png")
 
 
+def adaptive_ceiling() -> None:
+    """expJ: adaptive ceiling versus fixed thresholds, interactive SLO and worst-case wait."""
+    rows = load("results/raw/week5-expJ-adaptive/sweep-results.csv")
+    by: dict[str, list[dict[str, str]]] = defaultdict(list)
+    for row in rows:
+        by[row["label"].rsplit("-", 1)[0]].append(row)
+    order = ["fix3", "fix10", "fix30", "adp-cap10", "adp-cap30"]
+    labels = ["fix 3s", "fix 10s", "fix 30s", "adaptive\ncap 10s", "adaptive\ncap 30s"]
+    # Fixed thresholds in blue, the failed adaptive variants in red.
+    colors = [COLORS["static_priority"]] * 3 + [COLORS["fcfs"]] * 2
+
+    def mean_of(column: str) -> list[float]:
+        return [st.mean([float(r[column]) for r in by[v]]) for v in order]
+
+    def std_of(column: str) -> list[float]:
+        return [st.pstdev([float(r[column]) for r in by[v]]) for v in order]
+
+    figure, (left, right) = plt.subplots(1, 2, figsize=(10, 4))
+    x = range(len(order))
+    for axis, column, title, ylabel, ymax in (
+        (left, "slo_interactive_rate", "Interactive SLO", "Interactive SLO attainment", 1.05),
+        (right, "longest_queue_wait_s", "Worst-case wait", "Longest queue wait (s)", None),
+    ):
+        axis.bar(x, mean_of(column), yerr=std_of(column), capsize=6, color=colors)
+        axis.set_xticks(list(x))
+        axis.set_xticklabels(labels)
+        axis.set_ylabel(ylabel)
+        if ymax is not None:
+            axis.set_ylim(0, ymax)
+        axis.set_title(f"{title} (Poisson, rps=3.0)\nmean ± std over 6 seeds")
+        axis.grid(axis="y", alpha=0.25)
+    figure.suptitle(
+        "Adaptive ceiling fails; a well-set fixed threshold (10-30 s) is best and most stable",
+        fontsize=10,
+    )
+    figure.tight_layout()
+    figure.savefig(OUT / "adaptive-ceiling.png", dpi=160)
+    plt.close(figure)
+    print("wrote adaptive-ceiling.png")
+
+
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     saturation_robustness()
     aging_tradeoff()
     engine_params()
     multilevel_aging()
+    adaptive_ceiling()
 
 
 if __name__ == "__main__":

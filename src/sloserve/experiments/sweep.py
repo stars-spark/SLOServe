@@ -40,6 +40,10 @@ SWEEP_RESULT_COLUMNS = (
     "waiting_weight",
     "disable_length_estimate",
     "aging_levels",
+    "adaptive_ceiling",
+    "ceiling_margin",
+    "ceiling_floor_s",
+    "ceiling_cap_s",
     "request_count",
     "success_count",
     "error_count",
@@ -83,6 +87,10 @@ class SweepPoint(StrictModel):
     waiting_weight: float | None = Field(default=None, ge=0)
     disable_length_estimate: bool | None = None
     aging_levels: int | None = Field(default=None, ge=1)
+    adaptive_ceiling: bool | None = None
+    ceiling_margin: float | None = Field(default=None, gt=0)
+    ceiling_floor_s: float | None = Field(default=None, gt=0)
+    ceiling_cap_s: float | None = Field(default=None, gt=0)
 
 
 @dataclass(frozen=True, slots=True)
@@ -173,6 +181,10 @@ def _config_for_point(base_config: ExperimentConfig, point: SweepPoint) -> Exper
         "waiting_weight",
         "disable_length_estimate",
         "aging_levels",
+        "adaptive_ceiling",
+        "ceiling_margin",
+        "ceiling_floor_s",
+        "ceiling_cap_s",
     ):
         value = getattr(point, field_name)
         if value is not None:
@@ -207,6 +219,10 @@ def _metric_row(label: str, config: ExperimentConfig, metrics: MetricsSummary) -
         "waiting_weight": config.slo_aware.waiting_weight,
         "disable_length_estimate": config.slo_aware.disable_length_estimate,
         "aging_levels": config.slo_aware.aging_levels,
+        "adaptive_ceiling": config.slo_aware.adaptive_ceiling,
+        "ceiling_margin": config.slo_aware.ceiling_margin,
+        "ceiling_floor_s": config.slo_aware.ceiling_floor_s,
+        "ceiling_cap_s": config.slo_aware.ceiling_cap_s,
         "request_count": metrics.request_count,
         "success_count": metrics.success_count,
         "error_count": metrics.error_count,

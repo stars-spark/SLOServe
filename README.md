@@ -127,6 +127,22 @@ real K effect; the multi-seed sweep corrects it.
 
 ![Multi-level aging under Poisson arrivals](results/figures/multilevel-aging.png)
 
+## Results (Week 5)
+
+Week 5 tests whether the aging ceiling threshold — identified in Weeks 3–4 as the knob that governs
+SLO differentiation — should be made adaptive. An adaptive ceiling that floats with live queue
+congestion (`clamp(margin * median_queue_wait, floor, cap)`) is swept against fixed thresholds
+(3 s, 10 s, 30 s) over six seeds under Poisson arrivals. The adaptive ceiling **fails** on both
+axes: interactive SLO 0.39 (adaptive) versus 0.91 (fixed 10–30 s), with a longer worst-case wait —
+floating on the median in-queue wait is a destabilizing signal that Poisson bursts move the wrong
+way. The useful byproduct is about the fixed knob: the 3 s threshold behind the Week-3 saturation
+variance is simply mis-set. Raising it to 10–30 s lifts interactive SLO (0.83 → 0.91) and cuts the
+run-to-run standard deviation from 0.25 to 0.08–0.10 — so much of that "irreducible" variance was a
+knife-edge threshold, not execution-timing noise. The lever is real; the right way to pull it here
+is a calibrated constant, not a controller.
+
+![Adaptive ceiling versus fixed thresholds](results/figures/adaptive-ceiling.png)
+
 ## Reproducing the experiments
 
 Use Python 3.11.14 and the locked development environment:
