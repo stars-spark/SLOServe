@@ -242,6 +242,16 @@ The sweep's more useful result is a negative-space finding about the fixed knob 
 
 ![Adaptive ceiling versus fixed thresholds](../results/figures/adaptive-ceiling.png)
 
+### K. Output-length estimate: true vs advertised vs learned (multi-seed)
+
+Weeks 3–5 hold output length fixed as a known per-request cap. In real serving the actual output length is unknown at admission and heavy-tailed, so the SLO-aware service-time estimate must rely on a prediction. To study this we replace the workload with a realistic model: each request's true output length is drawn from a per-kind log-normal mixture (pooled shape referencing log-normal with mu=7, sigma=0.7, following Yang et al.'s queueing analysis), the model generates to that length, and the scheduler sees only a coarse prompt kind and a loose 2048-token advertised cap. A bucket-median length predictor trained offline (held-out MAE 381 tokens versus 1043 for the advertised-cap constant) supplies the learned estimate. We then compare three length sources feeding the service-time term — `true` (oracle, unrealistic), `advertised` (naive constant cap), and `learned` — at a saturating point (Poisson rps=1.2) over six seeds.
+
+Accurate length estimation does not help. Interactive SLO attainment is 0.68 ± 0.15 (oracle), 0.73 ± 0.15 (naive), and 0.70 ± 0.16 (learned); the naive constant is nominally best and the oracle nominally worst, all within one standard deviation. The pattern is consistent across every latency percentile — naive gives the lowest end-to-end P50 (3.97 s vs 4.35 s oracle) and P99 (8.74 s vs 10.25 s oracle) as well. The learned estimator behaves like a noisy oracle, sitting between the two, which confirms the pipeline works and that its neutrality is inherited from the oracle's.
+
+The mechanism is instructive. The SLO-aware score already encodes urgency through the slack term, `slack = deadline − now − service_time`. Under the naive constant, every request carries the same large service-time estimate, so subtracting it from a tight interactive deadline drives that request's slack sharply negative and promotes it — an accidental but effective deadline-first (EDF-like) protection of interactive requests. Feeding an accurate, mostly-small service time removes that inflation: a genuinely short interactive request now shows positive slack and can be deferred, occasionally missing its SLO. Because the realistic workload draws length independently of request class, shortest-job-first ordering by length conflicts with deadline-driven urgency rather than reinforcing it. Predicting output length to feed the SJF term is therefore the wrong use of length knowledge in this scorer; the slack/deadline term already handles per-class urgency. This negative result motivates the next study (section L, in progress): length's value lies in taming the heavy tail via max-token clipping — the queueing-delay mechanism of Yang et al. — not in reordering by predicted length.
+
+![Length-estimate comparison](../results/figures/length-source.png)
+
 ## 5. Discussion
 
 ### Balanced-optimum positioning

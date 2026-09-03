@@ -1194,3 +1194,30 @@ corr 为 0.63；统一 2048-token advertised-cap baseline 的 MAE 为 1043.27 to
 GPU expK-A 留给 orchestrator 执行；运行时必须保留 18 点的请求级 JSONL/CSV、GPU samples、配置与
 环境元数据，并联合报告吞吐、TTFT、TPOT、P50/P95/P99、分类 SLO、失败/超时、排队公平性和 GPU
 利用率/显存，再判断 learned length source 相对 true 与 advertised 的实际调度取舍。
+
+## 2026-09-03 — Week 6 expK-A：真机三路长度估计对照(负面结果 + 机制)
+
+### 要解决的问题
+realistic 重尾负载(log-normal 混合)下,比较喂给 slo_aware 服务时间项的三种输出长度来源:
+true(oracle,不现实)/ advertised(naive,恒 2048)/ learned(桶中位数预测器)。判据:learned 是否把
+naive→oracle 的交互 SLO 差距赚回。先用 rps-ladder smoke(realistic)定饱和点=rps 1.2(qwait 成形、
+无超时)。
+
+### 方法与命令
+- smoke:`configs/sweeps/probeK-realistic-rps.yaml`(rps 0.4/0.6/0.9/1.5),定 rps=1.2。
+- `configs/sweeps/expK-A-length-source.yaml`:{true,advertised,learned}×6 seed=18 点,Poisson rps=1.2,
+  realistic 负载,`uv run sloserve sweep`(~52min)。`length_source` 需写成带引号字符串(YAML 否则当 bool)。
+
+### 成功信号、失败诊断与实际结果(负面)
+- SLO_int(mean±std):oracle 0.68±0.15 / naive 0.73±0.15 / learned 0.70±0.16——**三路不可区分,naive 名义
+  最优、oracle 最差**,和"准确长度更好"的假设相反。每个延迟分位同向:naive e2e_p50 3.97 / p99 8.74 最低,
+  oracle 4.35 / 10.25 最高。全 0 超时 0 拒。
+- **机制**:slo_aware 的 slack 项 `deadline−now−service_time`。naive 给所有请求恒定大 service_time,对紧
+  deadline 的 interactive 立刻压出极负 slack → 抬优先(近似 EDF),意外但有效地保护 interactive。准确长度
+  让短 interactive 显出正 slack、可被推迟 → 偶尔误 SLO。realistic 里长度(kind)与紧迫度(class)独立,
+  SJF-by-length 与 deadline-urgency 打架。**结论:把长度预测喂 SJF 排序,对 per-class SLO 无益(deadline
+  项已够)**。learned 行为像带噪 oracle(介于两者),证明 pipeline 正确、中性继承自 oracle。
+- 价值指向 (B):长度的用处是**截断重尾降 E[S²]/排队延迟**(Xu 头条),不是 SJF 重排。(A) 负面恰为 (B) 铺路。
+
+### 下一步
+batch-2:长尾截断(用 learned/advertised 判定长请求→截 max_tokens 出口)+ expK-B 对照 + M/G/1 理论叠加。

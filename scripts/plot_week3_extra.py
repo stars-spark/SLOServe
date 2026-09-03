@@ -211,6 +211,60 @@ def adaptive_ceiling() -> None:
     print("wrote adaptive-ceiling.png")
 
 
+def length_source_comparison() -> None:
+    """expK-A: interactive SLO and latency for true/advertised/learned length estimates."""
+    rows = load("results/raw/week6-expK-A/sweep-results.csv")
+    by: dict[str, list[dict[str, str]]] = defaultdict(list)
+    for row in rows:
+        by[row["label"].rsplit("-", 1)[0]].append(row)
+    order = ["true", "adv", "learned"]
+    labels = ["true\n(oracle)", "advertised\n(naive)", "learned"]
+    colors = [COLORS["static_priority"], COLORS["fcfs"], COLORS["slo_aware"]]
+
+    def mean_of(column: str) -> list[float]:
+        return [st.mean([float(r[column]) for r in by[s]]) for s in order]
+
+    def std_of(column: str) -> list[float]:
+        return [st.pstdev([float(r[column]) for r in by[s]]) for s in order]
+
+    figure, (left, right) = plt.subplots(1, 2, figsize=(10, 4))
+    x = range(len(order))
+    left.bar(
+        x,
+        mean_of("slo_interactive_rate"),
+        yerr=std_of("slo_interactive_rate"),
+        capsize=6,
+        color=colors,
+    )
+    left.set_xticks(list(x))
+    left.set_xticklabels(labels)
+    left.set_ylabel("Interactive SLO attainment")
+    left.set_ylim(0, 1.05)
+    left.set_title("Interactive SLO by length estimate\n(realistic workload, rps=1.2, 6 seeds)")
+    left.grid(axis="y", alpha=0.25)
+
+    width = 0.38
+    p50 = mean_of("end_to_end_p50_s")
+    p99 = mean_of("end_to_end_p99_s")
+    right.bar([i - width / 2 for i in x], p50, width, label="e2e P50", color=COLORS["slo_aware"])
+    right.bar([i + width / 2 for i in x], p99, width, label="e2e P99", color="#c67f0c")
+    right.set_xticks(list(x))
+    right.set_xticklabels(labels)
+    right.set_ylabel("End-to-end latency (s)")
+    right.set_title("Latency by length estimate\naccurate length gives no gain here")
+    right.legend()
+    right.grid(axis="y", alpha=0.25)
+    figure.suptitle(
+        "Accurate output-length estimation does not improve SLO-aware scheduling "
+        "(the slack/deadline term already protects urgency)",
+        fontsize=9,
+    )
+    figure.tight_layout()
+    figure.savefig(OUT / "length-source.png", dpi=160)
+    plt.close(figure)
+    print("wrote length-source.png")
+
+
 def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     saturation_robustness()
@@ -218,6 +272,7 @@ def main() -> None:
     engine_params()
     multilevel_aging()
     adaptive_ceiling()
+    length_source_comparison()
 
 
 if __name__ == "__main__":

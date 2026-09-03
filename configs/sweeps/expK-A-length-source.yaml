@@ -12,7 +12,7 @@ base_overrides:
     max_in_flight: 4
   workload:
     arrival_process: poisson
-    request_rate_rps: 3.0
+    request_rate_rps: 1.2
     total_requests: 60
     interactive_fraction: 0.5
     warmup_requests: 5
