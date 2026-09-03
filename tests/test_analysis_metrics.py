@@ -57,6 +57,9 @@ def _record(
     first_token: float | None,
     completion: float,
     output_tokens: int,
+    requested_output_tokens: int | None = None,
+    backend_max_output_tokens: int | None = None,
+    finish_reason: str | None = None,
 ) -> RequestRecord:
     return RequestRecord(
         request_id=f"request-{sequence_id:06d}",
@@ -75,6 +78,9 @@ def _record(
         config_hash=CONFIG_HASH,
         repetition_index=0,
         env_version=ENV_VERSION,
+        requested_output_tokens=requested_output_tokens,
+        backend_max_output_tokens=backend_max_output_tokens,
+        finish_reason=finish_reason,
     )
 
 
@@ -172,6 +178,7 @@ def test_hand_calculated_metrics_can_be_recomputed_from_jsonl(tmp_path: Path) ->
     assert result.tpot_s.p95 == pytest.approx(2.3)
     assert result.tpot_s.p99 == pytest.approx(2.3)
     assert result.queue_wait_s.p95 == pytest.approx(0.6)
+    assert result.queue_wait_mean_s == pytest.approx((0.1 + 0.4 + 0.6) / 3)
     assert result.longest_queue_wait_s == pytest.approx(1.5)
     assert result.success_output_tokens == 9
     assert result.wall_clock_window_s == 8.0
@@ -182,6 +189,7 @@ def test_hand_calculated_metrics_can_be_recomputed_from_jsonl(tmp_path: Path) ->
     assert result.slo_by_class[RequestClass.BATCH].rate == pytest.approx(1 / 2)
     assert result.slo_attainment_gap == pytest.approx(0.25)
     assert result.jain_fairness_index == pytest.approx(0.9)
+    assert result.clip_applied_rate is None
 
 
 def test_empty_input_has_documented_nulls_and_zero_rate_conventions() -> None:
@@ -193,6 +201,7 @@ def test_empty_input_has_documented_nulls_and_zero_rate_conventions() -> None:
     assert result.ttft_s == Percentiles(None, None, None)
     assert result.tpot_s == Percentiles(None, None, None)
     assert result.longest_queue_wait_s is None
+    assert result.queue_wait_mean_s is None
     assert result.slo_overall.rate == 0.0
     assert all(summary.rate == 0.0 for summary in result.slo_by_class.values())
     assert result.slo_attainment_gap == 0.0
@@ -230,6 +239,7 @@ def test_all_failures_have_zero_throughput_and_no_success_latency_percentiles() 
     assert result.end_to_end_s == Percentiles(None, None, None)
     assert result.queue_wait_s == Percentiles(None, None, None)
     assert result.longest_queue_wait_s == 0.5
+    assert result.queue_wait_mean_s is None
     assert result.slo_overall.rate == 0.0
     assert result.jain_fairness_index == 1.0
 
@@ -343,3 +353,43 @@ def test_rejected_count_and_queue_wait_exclude_undispatched_records() -> None:
         + result.rejected_count
         == result.request_count
     )
+
+
+def test_clipping_metrics_report_latency_gain_with_output_cost() -> None:
+    records = (
+        _record(
+            0,
+            RequestClass.INTERACTIVE,
+            DispatchStatus.SUCCESS,
+            arrival=0.0,
+            dispatch=0.2,
+            first_token=0.4,
+            completion=1.0,
+            output_tokens=500,
+            requested_output_tokens=1000,
+            backend_max_output_tokens=500,
+            finish_reason="length",
+        ),
+        _record(
+            1,
+            RequestClass.BATCH,
+            DispatchStatus.SUCCESS,
+            arrival=1.0,
+            dispatch=1.4,
+            first_token=1.5,
+            completion=2.0,
+            output_tokens=300,
+            requested_output_tokens=400,
+            backend_max_output_tokens=400,
+            finish_reason="stop",
+        ),
+    )
+
+    result = calculate_metrics(records, _workload())
+
+    assert result.queue_wait_mean_s == pytest.approx(0.3)
+    assert result.clip_applied_count == 1
+    assert result.clip_applied_rate == pytest.approx(0.5)
+    assert result.realized_truncation_count == 1
+    assert result.realized_truncation_rate == pytest.approx(0.5)
+    assert result.mean_cap_reduction_tokens == pytest.approx(500.0)

@@ -26,6 +26,7 @@ class RequestEnvelope:
     deadline_time_s: float
     advertised_cap_tokens: int | None = None
     prompt_kind: str | None = None
+    backend_max_output_tokens: int | None = None
 
     def __post_init__(self) -> None:
         """Reject invalid metadata at the queue boundary."""
@@ -43,3 +44,18 @@ class RequestEnvelope:
             raise ValueError("deadline_time_s must not precede arrival_time_s")
         if self.advertised_cap_tokens is not None and self.advertised_cap_tokens < 1:
             raise ValueError("advertised_cap_tokens must be positive")
+        if self.backend_max_output_tokens is not None:
+            if self.backend_max_output_tokens < 1:
+                raise ValueError("backend_max_output_tokens must be positive")
+            if self.backend_max_output_tokens > self.max_output_tokens:
+                raise ValueError("backend_max_output_tokens must not exceed the requested target")
+
+    @property
+    def effective_max_output_tokens(self) -> int:
+        """Return the max-token value that should be sent to the backend."""
+        return self.backend_max_output_tokens or self.max_output_tokens
+
+    @property
+    def clip_applied(self) -> bool:
+        """Whether admission reduced the request's backend output limit."""
+        return self.effective_max_output_tokens < self.max_output_tokens

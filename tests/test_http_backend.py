@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import replace
 from typing import Any
 
 import httpx
@@ -122,6 +123,29 @@ def test_streaming_without_usage_falls_back_to_content_delta_count() -> None:
         telemetry = backend.telemetry["request-0"]
         assert telemetry.output_tokens == 2
         assert telemetry.finish_reason == "length"
+
+    asyncio.run(scenario())
+
+
+def test_backend_sends_clipped_cap_without_overwriting_original_target() -> None:
+    async def scenario() -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert json.loads(request.content)["max_tokens"] == 2
+            return _sse_response(
+                request,
+                [
+                    {"choices": [{"delta": {"content": "token"}}]},
+                    {"choices": [{"delta": {}, "finish_reason": "length"}]},
+                ],
+            )
+
+        request = replace(_request(), backend_max_output_tokens=2)
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            backend = HttpStreamingBackend(backend_config=_backend_config(), client=client)
+            await backend.send(request)
+
+        assert request.max_output_tokens == 4
+        assert backend.telemetry[request.request_id].finish_reason == "length"
 
     asyncio.run(scenario())
 

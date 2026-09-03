@@ -17,6 +17,7 @@ from pydantic import Field
 
 from sloserve.analysis.metrics import MetricsSummary
 from sloserve.config import (
+    ClipSource,
     ExperimentConfig,
     LengthSource,
     SchedulerPolicyName,
@@ -47,6 +48,10 @@ SWEEP_RESULT_COLUMNS = (
     "disable_length_estimate",
     "length_source",
     "length_estimator_path",
+    "clip_enabled",
+    "clip_max_tokens",
+    "clip_source",
+    "clip_estimator_path",
     "length_model",
     "prompt_kinds",
     "prompt_kind_fractions",
@@ -79,7 +84,13 @@ SWEEP_RESULT_COLUMNS = (
     "queue_wait_p50_s",
     "queue_wait_p95_s",
     "queue_wait_p99_s",
+    "queue_wait_mean_s",
     "longest_queue_wait_s",
+    "clip_applied_count",
+    "clip_applied_rate",
+    "realized_truncation_count",
+    "realized_truncation_rate",
+    "mean_cap_reduction_tokens",
     "slo_overall_rate",
     "slo_interactive_rate",
     "slo_batch_rate",
@@ -104,6 +115,10 @@ class SweepPoint(StrictModel):
     disable_length_estimate: bool | None = None
     length_source: LengthSource | None = None
     length_estimator_path: str | None = None
+    clip_enabled: bool | None = None
+    clip_max_tokens: int | None = Field(default=None, ge=1)
+    clip_source: ClipSource | None = None
+    clip_estimator_path: str | None = None
     aging_levels: int | None = Field(default=None, ge=1)
     adaptive_ceiling: bool | None = None
     ceiling_margin: float | None = Field(default=None, gt=0)
@@ -182,6 +197,7 @@ def _config_for_point(base_config: ExperimentConfig, point: SweepPoint) -> Exper
     router_updates: dict[str, object] = {}
     workload_updates: dict[str, object] = {}
     slo_updates: dict[str, object] = {}
+    admission_updates: dict[str, object] = {}
     if point.policy is not None:
         router_updates["policy"] = point.policy
     if point.max_in_flight is not None:
@@ -192,6 +208,15 @@ def _config_for_point(base_config: ExperimentConfig, point: SweepPoint) -> Exper
         workload_updates["random_seed"] = point.random_seed
     if point.interactive_fraction is not None:
         workload_updates["interactive_fraction"] = point.interactive_fraction
+    for field_name in (
+        "clip_enabled",
+        "clip_max_tokens",
+        "clip_source",
+        "clip_estimator_path",
+    ):
+        value = getattr(point, field_name)
+        if value is not None:
+            admission_updates[field_name] = value
     for field_name in (
         "aging_threshold_s",
         "cost_weight",
@@ -213,12 +238,14 @@ def _config_for_point(base_config: ExperimentConfig, point: SweepPoint) -> Exper
     router = base_config.router.model_copy(update=router_updates)
     workload = base_config.workload.model_copy(update=workload_updates)
     slo_aware = base_config.slo_aware.model_copy(update=slo_updates)
+    admission = base_config.admission.model_copy(update=admission_updates)
     return ExperimentConfig.model_validate(
         {
             **base_config.model_dump(),
             "router": router.model_dump(),
             "workload": workload.model_dump(),
             "slo_aware": slo_aware.model_dump(),
+            "admission": admission.model_dump(),
         }
     )
 
@@ -241,6 +268,10 @@ def _metric_row(label: str, config: ExperimentConfig, metrics: MetricsSummary) -
         "disable_length_estimate": config.slo_aware.disable_length_estimate,
         "length_source": config.slo_aware.length_source.value,
         "length_estimator_path": config.slo_aware.length_estimator_path,
+        "clip_enabled": config.admission.clip_enabled,
+        "clip_max_tokens": config.admission.clip_max_tokens,
+        "clip_source": config.admission.clip_source.value,
+        "clip_estimator_path": config.admission.clip_estimator_path,
         "length_model": config.workload.length_model.value,
         "prompt_kinds": json.dumps(realistic.kinds) if realistic is not None else None,
         "prompt_kind_fractions": (
@@ -277,7 +308,13 @@ def _metric_row(label: str, config: ExperimentConfig, metrics: MetricsSummary) -
         "queue_wait_p50_s": metrics.queue_wait_s.p50,
         "queue_wait_p95_s": metrics.queue_wait_s.p95,
         "queue_wait_p99_s": metrics.queue_wait_s.p99,
+        "queue_wait_mean_s": metrics.queue_wait_mean_s,
         "longest_queue_wait_s": metrics.longest_queue_wait_s,
+        "clip_applied_count": metrics.clip_applied_count,
+        "clip_applied_rate": metrics.clip_applied_rate,
+        "realized_truncation_count": metrics.realized_truncation_count,
+        "realized_truncation_rate": metrics.realized_truncation_rate,
+        "mean_cap_reduction_tokens": metrics.mean_cap_reduction_tokens,
         "slo_overall_rate": metrics.slo_overall.rate,
         "slo_interactive_rate": interactive.rate if interactive is not None else None,
         "slo_batch_rate": batch.rate if batch is not None else None,

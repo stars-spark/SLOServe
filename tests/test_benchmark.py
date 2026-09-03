@@ -289,6 +289,7 @@ def test_place_on_clock_preserves_all_scheduling_fields() -> None:
         deadline_time_s=11.0,
         advertised_cap_tokens=2048,
         prompt_kind="long",
+        backend_max_output_tokens=1024,
     )
 
     placed = _place_on_clock(envelope, repetition_start_s=100.0)
@@ -296,6 +297,7 @@ def test_place_on_clock_preserves_all_scheduling_fields() -> None:
     assert placed.advertised_cap_tokens == 2048
     assert placed.prompt_kind == "long"
     assert placed.max_output_tokens == 1500
+    assert placed.backend_max_output_tokens == 1024
     assert placed.input_tokens == 64
     assert placed.arrival_time_s == 101.0
     assert placed.deadline_time_s == 111.0

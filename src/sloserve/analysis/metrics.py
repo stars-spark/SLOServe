@@ -47,7 +47,13 @@ class MetricsSummary:
     tpot_s: Percentiles
     end_to_end_s: Percentiles
     queue_wait_s: Percentiles
+    queue_wait_mean_s: float | None
     longest_queue_wait_s: float | None
+    clip_applied_count: int
+    clip_applied_rate: float | None
+    realized_truncation_count: int
+    realized_truncation_rate: float | None
+    mean_cap_reduction_tokens: float | None
     slo_overall: AttainmentSummary
     slo_by_class: dict[RequestClass, AttainmentSummary]
     slo_attainment_gap: float
@@ -133,6 +139,16 @@ def calculate_metrics(
         for record in records
         if record.dispatch_time_s is not None
     ]
+    clipping_instrumented = [record for record in records if record.clip_applied is not None]
+    clipped_records = [record for record in clipping_instrumented if record.clip_applied]
+    realized_truncations = [
+        record for record in clipped_records if record.finish_reason == "length"
+    ]
+    cap_reductions = [
+        reduction
+        for record in clipped_records
+        if (reduction := record.cap_reduction_tokens) is not None
+    ]
 
     success_output_tokens = sum(record.output_tokens for record in successes)
     if records:
@@ -181,7 +197,25 @@ def calculate_metrics(
         tpot_s=_percentiles(tpot_values),
         end_to_end_s=_percentiles(end_to_end_values),
         queue_wait_s=_percentiles(success_queue_wait_values),
+        queue_wait_mean_s=(
+            sum(success_queue_wait_values) / len(success_queue_wait_values)
+            if success_queue_wait_values
+            else None
+        ),
         longest_queue_wait_s=max(all_queue_wait_values) if all_queue_wait_values else None,
+        clip_applied_count=len(clipped_records),
+        clip_applied_rate=(
+            len(clipped_records) / len(clipping_instrumented) if clipping_instrumented else None
+        ),
+        realized_truncation_count=len(realized_truncations),
+        realized_truncation_rate=(
+            len(realized_truncations) / len(clipping_instrumented)
+            if clipping_instrumented
+            else None
+        ),
+        mean_cap_reduction_tokens=(
+            sum(cap_reductions) / len(cap_reductions) if cap_reductions else None
+        ),
         slo_overall=_attainment(records, workload_config),
         slo_by_class=slo_by_class,
         slo_attainment_gap=slo_attainment_gap,

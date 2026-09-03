@@ -16,6 +16,7 @@ import pytest
 from sloserve.cli import build_parser, build_sweep_runtime
 from sloserve.config import (
     ArrivalProcess,
+    ClipSource,
     ExperimentConfig,
     LengthModel,
     LengthSource,
@@ -183,6 +184,7 @@ def test_versioned_sweep_configs_load_expected_matrices() -> None:
         "expH-poisson.yaml": 3,
         "expI-multilevel.yaml": 4,
         "expK-A-length-source.yaml": 18,
+        "expK-B-clipping.yaml": 24,
     }
 
     definitions = {
@@ -224,6 +226,13 @@ def test_versioned_sweep_configs_load_expected_matrices() -> None:
     assert [point.length_source for point in length_source.points[12:]] == [
         LengthSource.LEARNED
     ] * 6
+    clipping = definitions["expK-B-clipping.yaml"]
+    assert clipping.base_config.router.policy is SchedulerPolicyName.FCFS
+    assert clipping.base_config.admission.clip_source is ClipSource.LEARNED
+    assert [point.clip_enabled for point in clipping.points[:6]] == [False] * 6
+    assert [point.clip_max_tokens for point in clipping.points[6:]] == (
+        [1536] * 6 + [1024] * 6 + [512] * 6
+    )
 
 
 def test_sweep_cli_parser_and_runtime_factories_are_lazy_and_fresh() -> None:

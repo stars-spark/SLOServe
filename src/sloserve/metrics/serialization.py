@@ -15,6 +15,12 @@ from sloserve.router.models import RequestClass
 from sloserve.workload.dispatcher import DispatchStatus
 
 _FIELD_NAMES = tuple(field.name for field in fields(RequestRecord))
+_OPTIONAL_ADDED_FIELDS = {
+    "requested_output_tokens",
+    "backend_max_output_tokens",
+    "finish_reason",
+}
+_LEGACY_FIELD_NAMES = tuple(name for name in _FIELD_NAMES if name not in _OPTIONAL_ADDED_FIELDS)
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,11 +49,15 @@ def _record_to_mapping(record: RequestRecord) -> dict[str, Any]:
         "config_hash": record.config_hash,
         "repetition_index": record.repetition_index,
         "env_version": record.env_version,
+        "requested_output_tokens": record.requested_output_tokens,
+        "backend_max_output_tokens": record.backend_max_output_tokens,
+        "finish_reason": record.finish_reason,
     }
 
 
 def _record_from_mapping(data: Mapping[str, Any]) -> RequestRecord:
-    if set(data) != set(_FIELD_NAMES):
+    field_set = set(data)
+    if field_set not in (set(_FIELD_NAMES), set(_LEGACY_FIELD_NAMES)):
         missing = sorted(set(_FIELD_NAMES) - set(data))
         extra = sorted(set(data) - set(_FIELD_NAMES))
         raise ValueError(f"request record fields differ: missing={missing}, extra={extra}")
@@ -55,6 +65,9 @@ def _record_from_mapping(data: Mapping[str, Any]) -> RequestRecord:
     dispatch_raw = data["dispatch_time_s"]
     first_token_raw = data["first_token_time_s"]
     error_type_raw = data["error_type"]
+    requested_output_raw = data.get("requested_output_tokens")
+    backend_max_output_raw = data.get("backend_max_output_tokens")
+    finish_reason_raw = data.get("finish_reason")
     return RequestRecord(
         request_id=str(data["request_id"]),
         sequence_id=int(data["sequence_id"]),
@@ -72,6 +85,13 @@ def _record_from_mapping(data: Mapping[str, Any]) -> RequestRecord:
         config_hash=str(data["config_hash"]),
         repetition_index=int(data["repetition_index"]),
         env_version=str(data["env_version"]),
+        requested_output_tokens=(
+            None if requested_output_raw in (None, "") else int(requested_output_raw)
+        ),
+        backend_max_output_tokens=(
+            None if backend_max_output_raw in (None, "") else int(backend_max_output_raw)
+        ),
+        finish_reason=None if finish_reason_raw in (None, "") else str(finish_reason_raw),
     )
 
 
@@ -126,7 +146,7 @@ def read_request_records_csv(path: str | Path) -> tuple[RequestRecord, ...]:
     """Read and validate records from the derived CSV representation."""
     with Path(path).open(encoding="utf-8", newline="") as source:
         reader = csv.DictReader(source)
-        if reader.fieldnames != list(_FIELD_NAMES):
+        if reader.fieldnames not in (list(_FIELD_NAMES), list(_LEGACY_FIELD_NAMES)):
             raise ValueError("CSV header does not match the request record schema")
         try:
             return tuple(_record_from_mapping(row) for row in reader)

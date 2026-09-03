@@ -33,6 +33,9 @@ class RequestRecord:
     config_hash: str
     repetition_index: int
     env_version: str
+    requested_output_tokens: int | None = None
+    backend_max_output_tokens: int | None = None
+    finish_reason: str | None = None
 
     def __post_init__(self) -> None:
         """Reject records that cannot represent a coherent event timeline."""
@@ -52,6 +55,20 @@ class RequestRecord:
             raise ValueError("config_hash must be a lowercase SHA-256 hex digest")
         if self.error_type == "":
             raise ValueError("error_type must be null or a non-empty string")
+        if self.finish_reason == "":
+            raise ValueError("finish_reason must be null or a non-empty string")
+        if self.requested_output_tokens is not None and self.requested_output_tokens < 1:
+            raise ValueError("requested_output_tokens must be positive when present")
+        if self.backend_max_output_tokens is not None:
+            if self.backend_max_output_tokens < 1:
+                raise ValueError("backend_max_output_tokens must be positive when present")
+            if (
+                self.requested_output_tokens is not None
+                and self.backend_max_output_tokens > self.requested_output_tokens
+            ):
+                raise ValueError(
+                    "backend_max_output_tokens must not exceed requested_output_tokens"
+                )
 
         timestamps = (self.arrival_time_s, self.enqueue_time_s, self.completion_time_s)
         if not all(math.isfinite(timestamp) for timestamp in timestamps):
@@ -107,6 +124,7 @@ class RequestRecord:
         config_hash: str,
         repetition_index: int,
         env_version: str,
+        finish_reason: str | None = None,
     ) -> RequestRecord:
         """Build a record from the shared request envelope and terminal facts."""
         return cls(
@@ -126,4 +144,21 @@ class RequestRecord:
             config_hash=config_hash,
             repetition_index=repetition_index,
             env_version=env_version,
+            requested_output_tokens=envelope.max_output_tokens,
+            backend_max_output_tokens=envelope.effective_max_output_tokens,
+            finish_reason=finish_reason,
         )
+
+    @property
+    def clip_applied(self) -> bool | None:
+        """Return whether the backend cap reduced the target, or null for legacy facts."""
+        if self.requested_output_tokens is None or self.backend_max_output_tokens is None:
+            return None
+        return self.backend_max_output_tokens < self.requested_output_tokens
+
+    @property
+    def cap_reduction_tokens(self) -> int | None:
+        """Return the configured target reduction, or null for legacy facts."""
+        if self.requested_output_tokens is None or self.backend_max_output_tokens is None:
+            return None
+        return self.requested_output_tokens - self.backend_max_output_tokens

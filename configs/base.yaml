@@ -25,6 +25,14 @@ router:
   max_in_flight: 16
   queue_capacity: 256
 
+admission:
+  # Optional external max-token clipping. Disabled by default so all earlier
+  # experiments preserve their original backend request semantics.
+  clip_enabled: false
+  clip_max_tokens: 2048
+  clip_source: advertised
+  clip_estimator_path: null
+
 slo_aware:
   # Coarse service-time estimates; normalization makes scoring robust to exact values.
   input_token_seconds: 0.0005

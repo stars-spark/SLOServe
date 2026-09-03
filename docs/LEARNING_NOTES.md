@@ -1230,3 +1230,40 @@ prompt_kind=None 退化成全局常数。parity 测试没抓到——uniform_cap
 ### 下一步
 batch-2:长尾截断(把长度知识用于截 vLLM max_tokens 出口压重尾 E[S²],而非 SJF 重排)+ expK-B 对照 +
 M/G/1 理论叠加。预测器方向:更细的 per-request 回归 / LLM 长度预测,替代粗桶中位数。
+
+## 2026-09-03 — Week 6 batch 2a：长度感知 max-token 截断与效用损失度量
+
+### 要解决的问题与为什么需要
+
+expK-A 证明 oracle 长度有调度价值，但粗桶预测器的结构化误差会主动错排请求。长度知识的第二种用途
+不是排序，而是在送入 vLLM 前识别长尾并降低 `max_tokens`，以压低重尾服务时间的二阶矩。这个动作会
+减少输出效用，因此延迟收益必须和截断代价一起报告，不能把少生成 token 伪装成无代价的 SLO 改善。
+
+### 关键代码、方法与命令
+
+- 新增默认关闭的 `admission` 配置：`clip_enabled`、`clip_max_tokens`、
+  `clip_source={advertised,learned}`、`clip_estimator_path`。learned 截断启用时必须有独立 artifact。
+- `OutputClipper` 只读取调度可见的 advertised cap 或预测器特征。只有估计值和真实目标都严格大于
+  `clip_max_tokens` 时，才设置独立的 `backend_max_output_tokens`；原始 `max_output_tokens` 继续保存
+  用户目标，避免信息和效用损失被覆盖。
+- HTTP backend 仅在发请求时读取 effective cap。请求级事实新增 original target、backend cap 和
+  `finish_reason`，同时保持旧版 JSONL/CSV 可读。
+- 聚合新增 queue-wait mean、cap-applied 比例、实际 `finish_reason=length` 的截断比例，以及被施加
+  cap 的请求平均理论削减 token 数；完整性报告和 sweep CSV/JSON 同步新增这些字段。
+- `configs/sweeps/expK-B-clipping.yaml` 用 FCFS 隔离截断效应：no-clip 与 learned cap
+  1536/1024/512，各重放同 6 个 seed，共 24 点；realistic Poisson rps=1.2，每点 3 repetitions。
+
+### 成功信号、失败诊断与当前结果
+
+- 单测覆盖：默认关闭逐对象 parity、advertised 超阈才截、learned 只用可见特征、backend 发 cap 但
+  不覆盖原目标、请求模型边界、记录和效用聚合、reclock 保留 cap、24 点 sweep 装配。
+- 兼容性抽查成功读取 Week 1 的 75 条旧 JSONL 和 75 条旧 CSV；expK-B 四组首点解析为预期的
+  no-clip/1536/1024/512 和 seed 20250825。
+- `uv lock --check`、Ruff lint、Ruff format 和 126 个 pytest 全部通过。本切片尚未运行 expK-B，
+  因此没有延迟改善、截断比例或效用损失的真机结论。
+
+### 下一步
+
+启动固定版本 vLLM，运行 expK-B 24 点并保留全部请求级事实和 GPU 样本；按 6 seed 聚合 queue mean/P99、
+SLO、吞吐、cap-applied/realized-truncation rate 与 token reduction。只有在同时展示效用损失时，才解释
+截断带来的延迟变化。之后再做 M/G/1 定性趋势桥接。

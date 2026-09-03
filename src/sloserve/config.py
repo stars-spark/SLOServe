@@ -57,6 +57,13 @@ class LengthSource(StrEnum):
     LEARNED = "learned"
 
 
+class ClipSource(StrEnum):
+    """Scheduler-visible estimates allowed to trigger output clipping."""
+
+    ADVERTISED = "advertised"
+    LEARNED = "learned"
+
+
 class BackendConfig(StrictModel):
     """Connection settings for the vLLM OpenAI-compatible backend."""
 
@@ -94,6 +101,26 @@ class RouterConfig(StrictModel):
     listen_port: int = Field(ge=1, le=65535)
     max_in_flight: int = Field(ge=1)
     queue_capacity: int = Field(ge=1)
+
+
+class AdmissionControlConfig(StrictModel):
+    """Optional output-length clipping applied before dispatch to the backend."""
+
+    clip_enabled: bool = False
+    clip_max_tokens: int = Field(default=2048, ge=1)
+    clip_source: ClipSource = ClipSource.ADVERTISED
+    clip_estimator_path: str | None = None
+
+    @model_validator(mode="after")
+    def learned_clip_source_has_estimator(self) -> AdmissionControlConfig:
+        """Require the learned artifact only when learned clipping is active."""
+        if (
+            self.clip_enabled
+            and self.clip_source is ClipSource.LEARNED
+            and self.clip_estimator_path is None
+        ):
+            raise ValueError("learned clip source requires clip_estimator_path")
+        return self
 
 
 class SloAwareConfig(StrictModel):
@@ -235,6 +262,7 @@ class ExperimentConfig(StrictModel):
     backend: BackendConfig
     server: ServerConfig
     router: RouterConfig
+    admission: AdmissionControlConfig = AdmissionControlConfig()
     slo_aware: SloAwareConfig
     workload: WorkloadConfig
     metrics: MetricsConfig

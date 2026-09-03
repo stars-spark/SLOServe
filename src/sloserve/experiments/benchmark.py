@@ -17,6 +17,7 @@ from sloserve.metrics.config_hash import experiment_config_hash
 from sloserve.metrics.records import RequestRecord
 from sloserve.metrics.serialization import RequestRecordPaths, write_request_records
 from sloserve.router.admission import AdmissionQueue, AdmissionResult
+from sloserve.router.clipping import OutputClipper
 from sloserve.router.models import RequestClass, RequestEnvelope
 from sloserve.router.policies.factory import build_policy
 from sloserve.workload.backend import AsyncRequestBackend
@@ -100,6 +101,7 @@ async def run_benchmark(
 
     config_hash = experiment_config_hash(config)
     all_records: list[RequestRecord] = []
+    output_clipper = OutputClipper(config.admission)
 
     async with AsyncExitStack() as sampler_stack:
         if gpu_sampler is not None:
@@ -109,7 +111,8 @@ async def run_benchmark(
             relative_envelopes = generate_requests(config.workload)
             repetition_start_s = clock()
             envelopes = tuple(
-                _place_on_clock(envelope, repetition_start_s) for envelope in relative_envelopes
+                output_clipper.apply(_place_on_clock(envelope, repetition_start_s))
+                for envelope in relative_envelopes
             )
 
             async with AdmissionQueue(
@@ -198,6 +201,7 @@ def _place_on_clock(envelope: RequestEnvelope, repetition_start_s: float) -> Req
         deadline_time_s=repetition_start_s + envelope.deadline_time_s,
         advertised_cap_tokens=envelope.advertised_cap_tokens,
         prompt_kind=envelope.prompt_kind,
+        backend_max_output_tokens=envelope.backend_max_output_tokens,
     )
 
 
@@ -254,6 +258,7 @@ def _join_repetition(
                 config_hash=config_hash,
                 repetition_index=repetition_index,
                 env_version=env_version,
+                finish_reason=telemetry.finish_reason if telemetry is not None else None,
             )
         )
     return tuple(joined)
@@ -292,6 +297,20 @@ def build_completeness_report(
             "timeout_count": _value_field(metrics.timeout_count),
             "cancelled_count": _value_field(metrics.cancelled_count),
             "rejected_count": _value_field(metrics.rejected_count),
+            "clip_applied_count": _value_field(metrics.clip_applied_count),
+            "clip_applied_rate": _optional_field(
+                metrics.clip_applied_rate,
+                "request facts predate clipping instrumentation",
+            ),
+            "realized_truncation_count": _value_field(metrics.realized_truncation_count),
+            "realized_truncation_rate": _optional_field(
+                metrics.realized_truncation_rate,
+                "request facts predate clipping instrumentation",
+            ),
+            "mean_cap_reduction_tokens": _optional_field(
+                metrics.mean_cap_reduction_tokens,
+                "no formal request had its backend output cap reduced",
+            ),
             "terminal_count_matches_request_count": _value_field(
                 metrics.success_count
                 + metrics.error_count
@@ -303,6 +322,10 @@ def build_completeness_report(
             "longest_queue_wait_s": _optional_field(
                 metrics.longest_queue_wait_s,
                 "no formal request was dispatched",
+            ),
+            "queue_wait_mean_s": _optional_field(
+                metrics.queue_wait_mean_s,
+                "no successful formal request was dispatched",
             ),
             "slo_overall": _attainment_field(metrics.slo_overall),
             "slo_attainment_gap": _value_field(metrics.slo_attainment_gap),

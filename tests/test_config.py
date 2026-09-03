@@ -8,6 +8,7 @@ import yaml
 from pydantic import ValidationError
 
 from sloserve.config import (
+    AdmissionControlConfig,
     BackendConfig,
     ExperimentConfig,
     LengthModel,
@@ -40,6 +41,7 @@ def test_base_config_loads() -> None:
     assert config.slo_aware.aging_levels == 1
     assert config.slo_aware.length_source is LengthSource.TRUE
     assert config.slo_aware.length_estimator_path is None
+    assert config.admission == AdmissionControlConfig()
     assert config.workload.length_model is LengthModel.UNIFORM_CAP
     assert config.workload.realistic_length is None
 
@@ -173,3 +175,17 @@ def test_learned_length_source_requires_estimator_path() -> None:
 
     with pytest.raises(ValidationError, match="requires length_estimator_path"):
         ExperimentConfig.model_validate(raw)
+
+
+def test_enabled_learned_clipping_requires_its_own_estimator_path() -> None:
+    raw = _base_config_dict()
+    raw["admission"]["clip_enabled"] = True
+    raw["admission"]["clip_source"] = "learned"
+
+    with pytest.raises(ValidationError, match="requires clip_estimator_path"):
+        ExperimentConfig.model_validate(raw)
+
+    # A dormant learned source must preserve old configs without loading an artifact.
+    raw["admission"]["clip_enabled"] = False
+    config = ExperimentConfig.model_validate(raw)
+    assert config.admission.clip_enabled is False

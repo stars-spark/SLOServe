@@ -56,7 +56,7 @@ class HttpStreamingBackend(AsyncRequestBackend):
             "model": self._model,
             "stream": True,
             "messages": [{"role": "user", "content": _DETERMINISTIC_PROMPT}],
-            "max_tokens": request.max_output_tokens,
+            "max_tokens": request.effective_max_output_tokens,
             "temperature": 0,
             "stream_options": {"include_usage": True},
         }

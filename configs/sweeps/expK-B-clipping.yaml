@@ -1,0 +1,55 @@
+# Experiment K-B: isolate learned length-aware max-token clipping under the same realistic
+# heavy-tailed workload as expK-A. FCFS keeps scheduling fixed so differences come from clipping,
+# not from the learned estimator's known ordering errors. Each arm replays the same six seeds.
+base_config: ../base.yaml
+base_overrides:
+  server:
+    gpu_memory_utilization: 0.5
+    max_num_seqs: 16
+  router:
+    policy: fcfs
+    max_in_flight: 4
+  admission:
+    clip_enabled: false
+    clip_max_tokens: 2048
+    clip_source: learned
+    clip_estimator_path: results/artifacts/length-predictor.json
+  workload:
+    arrival_process: poisson
+    request_rate_rps: 1.2
+    total_requests: 60
+    interactive_fraction: 0.5
+    warmup_requests: 5
+    repetitions: 3
+    length_model: realistic
+    realistic_length:
+      advertised_cap_tokens: 2048
+      clamp_max: 2048
+  metrics:
+    output_directory: results/raw/week6-expK-B
+
+points:
+  - {label: no-clip-s1, clip_enabled: false, random_seed: 20250825}
+  - {label: no-clip-s2, clip_enabled: false, random_seed: 11}
+  - {label: no-clip-s3, clip_enabled: false, random_seed: 202}
+  - {label: no-clip-s4, clip_enabled: false, random_seed: 3407}
+  - {label: no-clip-s5, clip_enabled: false, random_seed: 42}
+  - {label: no-clip-s6, clip_enabled: false, random_seed: 65537}
+  - {label: clip1536-s1, clip_enabled: true, clip_max_tokens: 1536, random_seed: 20250825}
+  - {label: clip1536-s2, clip_enabled: true, clip_max_tokens: 1536, random_seed: 11}
+  - {label: clip1536-s3, clip_enabled: true, clip_max_tokens: 1536, random_seed: 202}
+  - {label: clip1536-s4, clip_enabled: true, clip_max_tokens: 1536, random_seed: 3407}
+  - {label: clip1536-s5, clip_enabled: true, clip_max_tokens: 1536, random_seed: 42}
+  - {label: clip1536-s6, clip_enabled: true, clip_max_tokens: 1536, random_seed: 65537}
+  - {label: clip1024-s1, clip_enabled: true, clip_max_tokens: 1024, random_seed: 20250825}
+  - {label: clip1024-s2, clip_enabled: true, clip_max_tokens: 1024, random_seed: 11}
+  - {label: clip1024-s3, clip_enabled: true, clip_max_tokens: 1024, random_seed: 202}
+  - {label: clip1024-s4, clip_enabled: true, clip_max_tokens: 1024, random_seed: 3407}
+  - {label: clip1024-s5, clip_enabled: true, clip_max_tokens: 1024, random_seed: 42}
+  - {label: clip1024-s6, clip_enabled: true, clip_max_tokens: 1024, random_seed: 65537}
+  - {label: clip512-s1, clip_enabled: true, clip_max_tokens: 512, random_seed: 20250825}
+  - {label: clip512-s2, clip_enabled: true, clip_max_tokens: 512, random_seed: 11}
+  - {label: clip512-s3, clip_enabled: true, clip_max_tokens: 512, random_seed: 202}
+  - {label: clip512-s4, clip_enabled: true, clip_max_tokens: 512, random_seed: 3407}
+  - {label: clip512-s5, clip_enabled: true, clip_max_tokens: 512, random_seed: 42}
+  - {label: clip512-s6, clip_enabled: true, clip_max_tokens: 512, random_seed: 65537}
