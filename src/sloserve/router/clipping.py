@@ -45,3 +45,22 @@ class OutputClipper:
         ):
             return request
         return replace(request, backend_max_output_tokens=clip_max_tokens)
+
+    def apply_adaptive_cap(
+        self,
+        request: RequestEnvelope,
+        cap_tokens: int | None,
+    ) -> RequestEnvelope:
+        """Apply one dispatch-time cap without changing the fixed pre-queue path."""
+        if not self._config.adaptive_clip_enabled:
+            raise ValueError("adaptive cap application requires adaptive_clip_enabled=true")
+        if cap_tokens is None:
+            return request
+        if cap_tokens < 1:
+            raise ValueError("adaptive cap must be positive")
+        if (
+            self._estimated_output_tokens(request) <= cap_tokens
+            or request.max_output_tokens <= cap_tokens
+        ):
+            return request
+        return replace(request, backend_max_output_tokens=cap_tokens)

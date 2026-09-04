@@ -3,14 +3,21 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from types import TracebackType
 
 import pytest
 
-from sloserve.config import ExperimentConfig, SchedulerPolicyName, load_config
+from sloserve.config import (
+    AdmissionControlConfig,
+    ExperimentConfig,
+    SchedulerPolicyName,
+    TokenRangeConfig,
+    load_config,
+)
 from sloserve.experiments.benchmark import (
     BenchmarkResult,
     GpuSample,
@@ -31,9 +38,11 @@ class DeterministicTime:
 
     def __init__(self) -> None:
         self.now_s = 0.0
+        self.calls = 0
         self._arrivals: dict[tuple[int, int], asyncio.Event] = {}
 
     def clock(self) -> float:
+        self.calls += 1
         return self.now_s
 
     async def sleep(self, delay_s: float) -> None:
@@ -107,6 +116,53 @@ class TelemetryFakeBackend:
             raise RuntimeError(telemetry.error)
         if plan.status is DispatchStatus.CANCELLED:
             raise asyncio.CancelledError
+
+
+class GatedLowLoadTime:
+    """Release each low-load arrival only after the preceding backend call finishes."""
+
+    def __init__(self) -> None:
+        self.now_s = 0.0
+        self._gates: dict[int, asyncio.Event] = {}
+
+    def clock(self) -> float:
+        return self.now_s
+
+    async def sleep(self, delay_s: float) -> None:
+        del delay_s
+        task = asyncio.current_task()
+        task_name = task.get_name() if task is not None else ""
+        prefix = "sloserve-benchmark-arrival-"
+        if task_name.startswith(prefix):
+            _, sequence_text = task_name.removeprefix(prefix).split("-")
+            sequence_id = int(sequence_text)
+            await self.gate(sequence_id).wait()
+            self.now_s = sequence_id / 0.08
+            return
+        await asyncio.get_running_loop().create_future()
+
+    def gate(self, sequence_id: int) -> asyncio.Event:
+        event = self._gates.setdefault(sequence_id, asyncio.Event())
+        if sequence_id == 0:
+            event.set()
+        return event
+
+
+class GatedLowLoadBackend:
+    """Immediate telemetry backend that serializes the fixed low-load trace."""
+
+    def __init__(self, deterministic_time: GatedLowLoadTime) -> None:
+        self._time = deterministic_time
+        self.telemetry: dict[str, HttpCallTelemetry] = {}
+        self.sent: list[RequestEnvelope] = []
+
+    async def send(self, request: RequestEnvelope) -> None:
+        self.sent.append(request)
+        self.telemetry[request.request_id] = HttpCallTelemetry(
+            first_token_time_s=self._time.clock(),
+            output_tokens=2,
+        )
+        asyncio.get_running_loop().call_soon(self._time.gate(request.sequence_id + 1).set)
 
 
 class FakeGpuSampler:
@@ -348,3 +404,259 @@ def test_run_benchmark_uses_sampler_samples_over_direct_samples(tmp_path: Path) 
     }
     assert result.completeness_report.gpu["memory_used_mib"].value == {"peak": 3000.0}
     assert result.completeness_report.gpu["power_w"].value == {"mean": 70.0, "peak": 70.0}
+
+
+def _parity_config(output_directory: Path, *, fixed_clip: bool) -> ExperimentConfig:
+    config = _config(output_directory)
+    interactive = config.workload.interactive.model_copy(
+        update={"output_tokens": TokenRangeConfig(minimum=700, maximum=900)}
+    )
+    batch = config.workload.batch.model_copy(
+        update={"output_tokens": TokenRangeConfig(minimum=1200, maximum=1800)}
+    )
+    workload = config.workload.model_copy(update={"interactive": interactive, "batch": batch})
+    admission = config.admission.model_copy(
+        update={"clip_enabled": fixed_clip, "clip_max_tokens": 512}
+    )
+    return config.model_copy(update={"workload": workload, "admission": admission})
+
+
+@pytest.mark.parametrize(
+    ("arm", "fixed_clip"),
+    [("no-clip", False), ("fixed-512", True)],
+)
+def test_disabled_adaptive_path_matches_pre_change_golden_bytes(
+    arm: str,
+    fixed_clip: bool,
+) -> None:
+    fixture_directory = PROJECT_ROOT / "tests" / "fixtures" / "parity"
+    before = fixture_directory / f"{arm}-before.jsonl"
+    after = fixture_directory / f"{arm}-after.jsonl"
+    output_directory = Path("/tmp/sloserve-week7-baseline") / f"{arm}-before"
+    config = _parity_config(output_directory, fixed_clip=fixed_clip)
+    deterministic_time = DeterministicTime()
+    backend = TelemetryFakeBackend(deterministic_time)
+
+    result = asyncio.run(
+        run_benchmark(
+            config=config,
+            backend=backend,
+            env_version="week7-parity",
+            clock=deterministic_time.clock,
+            sleep=deterministic_time.sleep,
+            file_stem=f"{arm}-generated",
+        )
+    )
+
+    assert result.record_paths.jsonl is not None
+    generated_bytes = result.record_paths.jsonl.read_bytes()
+    before_bytes = before.read_bytes()
+    after_bytes = after.read_bytes()
+    assert generated_bytes == before_bytes == after_bytes
+    assert hashlib.sha256(generated_bytes).digest() == hashlib.sha256(before_bytes).digest()
+    assert json.loads("[" + generated_bytes.decode().replace("\n", ",").rstrip(",") + "]") == (
+        json.loads("[" + before_bytes.decode().replace("\n", ",").rstrip(",") + "]")
+    )
+    assert result.adaptive_decisions == ()
+    assert result.adaptive_decision_path is None
+    assert deterministic_time.calls == 44
+    assert not (output_directory / f"{arm}-generated-adaptive-cap-decisions.jsonl").exists()
+
+    objects = [json.loads(line) for line in generated_bytes.splitlines()]
+    assert [item["request_id"] for item in objects] == [
+        "request-000000",
+        "request-000001",
+        "request-000002",
+    ] * 2
+    assert [item["backend_max_output_tokens"] for item in objects] == (
+        [512] * 6 if fixed_clip else [872, 735, 1453] * 2
+    )
+    assert [item["status"] for item in objects] == ["success", "success", "rejected"] * 2
+    assert [
+        (
+            item["arrival_time_s"],
+            item["enqueue_time_s"],
+            item["dispatch_time_s"],
+            item["first_token_time_s"],
+            item["completion_time_s"],
+        )
+        for item in objects
+    ] == [
+        (0.0, 0.0, 0.0, 0.002, 0.002),
+        (0.001, 0.002, 0.002, 0.002, 0.002),
+        (0.002, 0.002, None, None, 0.002),
+        (0.002, 0.002, 0.002, 0.004, 0.004),
+        (0.003, 0.004, 0.004, 0.004, 0.004),
+        (0.004, 0.004, None, None, 0.004),
+    ]
+
+
+def test_recommended_low_load_trace_has_zero_utility_cost(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = load_config(PROJECT_ROOT / "configs" / "base.yaml")
+    requests = tuple(
+        RequestEnvelope(
+            request_id=f"low-{index}",
+            sequence_id=index,
+            request_class=RequestClass.INTERACTIVE,
+            arrival_time_s=index / 0.08,
+            input_tokens=64,
+            max_output_tokens=1800,
+            deadline_time_s=index / 0.08 + 120.0,
+            advertised_cap_tokens=2048,
+            prompt_kind="long",
+        )
+        for index in range(8)
+    )
+    monkeypatch.setattr(
+        "sloserve.experiments.benchmark.generate_requests",
+        lambda workload_config: requests,
+    )
+    workload = config.workload.model_copy(
+        update={
+            "request_rate_rps": 0.08,
+            "total_requests": len(requests),
+            "warmup_requests": 0,
+            "repetitions": 1,
+        }
+    )
+    router = config.router.model_copy(update={"max_in_flight": 4})
+    metrics = config.metrics.model_copy(update={"output_directory": tmp_path / "adaptive"})
+    adaptive_admission = AdmissionControlConfig(
+        clip_enabled=True,
+        adaptive_clip_enabled=True,
+    )
+    adaptive_config = config.model_copy(
+        update={
+            "workload": workload,
+            "router": router,
+            "metrics": metrics,
+            "admission": adaptive_admission,
+        }
+    )
+
+    adaptive_time = GatedLowLoadTime()
+    adaptive_backend = GatedLowLoadBackend(adaptive_time)
+    adaptive = asyncio.run(
+        run_benchmark(
+            config=adaptive_config,
+            backend=adaptive_backend,
+            env_version="low-load-gate",
+            clock=adaptive_time.clock,
+            sleep=adaptive_time.sleep,
+            file_stem="adaptive",
+        )
+    )
+
+    no_clip_metrics = config.metrics.model_copy(update={"output_directory": tmp_path / "no-clip"})
+    no_clip_config = adaptive_config.model_copy(
+        update={
+            "metrics": no_clip_metrics,
+            "admission": AdmissionControlConfig(),
+        }
+    )
+    no_clip_time = GatedLowLoadTime()
+    no_clip_backend = GatedLowLoadBackend(no_clip_time)
+    no_clip = asyncio.run(
+        run_benchmark(
+            config=no_clip_config,
+            backend=no_clip_backend,
+            env_version="low-load-gate",
+            clock=no_clip_time.clock,
+            sleep=no_clip_time.sleep,
+            file_stem="no-clip",
+        )
+    )
+
+    assert adaptive.metrics.clip_applied_count == 0
+    assert adaptive.metrics.realized_truncation_count == 0
+    assert all(
+        record.backend_max_output_tokens == record.requested_output_tokens
+        for record in adaptive.records
+    )
+    assert adaptive.adaptive_decision_path is not None
+    assert adaptive.adaptive_decision_path.is_file()
+    assert len(adaptive.adaptive_decisions) == len(requests)
+    assert all(decision.new_level.name == "L0" for decision in adaptive.adaptive_decisions)
+    assert no_clip.adaptive_decision_path is None
+
+    def comparable(record: object) -> dict[str, object]:
+        values = asdict(record)
+        values.pop("config_hash")
+        return values
+
+    assert [comparable(record) for record in adaptive.records] == [
+        comparable(record) for record in no_clip.records
+    ]
+    assert [request.effective_max_output_tokens for request in adaptive_backend.sent] == [
+        request.max_output_tokens for request in requests
+    ]
+    assert [request.effective_max_output_tokens for request in no_clip_backend.sent] == [
+        request.max_output_tokens for request in requests
+    ]
+
+
+def test_adaptive_sidecar_joins_dispatch_cap_into_request_records(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = load_config(PROJECT_ROOT / "configs" / "base.yaml")
+    requests = tuple(
+        RequestEnvelope(
+            request_id=f"burst-{index}",
+            sequence_id=index,
+            request_class=RequestClass.INTERACTIVE,
+            arrival_time_s=float(index),
+            input_tokens=64,
+            max_output_tokens=1800,
+            deadline_time_s=120.0,
+            advertised_cap_tokens=2048,
+            prompt_kind="long",
+        )
+        for index in range(3)
+    )
+    monkeypatch.setattr(
+        "sloserve.experiments.benchmark.generate_requests",
+        lambda workload_config: requests,
+    )
+    workload = config.workload.model_copy(
+        update={"total_requests": 3, "warmup_requests": 0, "repetitions": 1}
+    )
+    router = config.router.model_copy(update={"max_in_flight": 1, "queue_capacity": 3})
+    metrics = config.metrics.model_copy(update={"output_directory": tmp_path})
+    admission = AdmissionControlConfig(clip_enabled=True, adaptive_clip_enabled=True)
+    config = config.model_copy(
+        update={
+            "workload": workload,
+            "router": router,
+            "metrics": metrics,
+            "admission": admission,
+        }
+    )
+    deterministic_time = DeterministicTime()
+    backend = TelemetryFakeBackend(deterministic_time)
+
+    result = asyncio.run(
+        run_benchmark(
+            config=config,
+            backend=backend,
+            env_version="adaptive-sidecar-test",
+            clock=deterministic_time.clock,
+            sleep=deterministic_time.sleep,
+            file_stem="adaptive-burst",
+        )
+    )
+
+    assert result.adaptive_decision_path is not None
+    sidecar_objects = [
+        json.loads(line)
+        for line in result.adaptive_decision_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert [item["request_id"] for item in sidecar_objects] == backend.started_request_ids
+    assert [item["q_inst"] for item in sidecar_objects] == [0, 1, 0]
+    assert [item["new_level"] for item in sidecar_objects] == ["L0", "L1", "L1"]
+    assert [item["selected_cap"] for item in sidecar_objects] == [None, 1536, 1536]
+    assert [record.backend_max_output_tokens for record in result.records] == [1800, 1536, 1536]
+    assert [record.requested_output_tokens for record in result.records] == [1800, 1800, 1800]

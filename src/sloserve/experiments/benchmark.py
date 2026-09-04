@@ -13,6 +13,10 @@ from typing import TYPE_CHECKING, Protocol, TypeAlias
 
 from sloserve.analysis.metrics import AttainmentSummary, MetricsSummary, calculate_metrics
 from sloserve.config import ExperimentConfig
+from sloserve.metrics.adaptive_cap import (
+    AdaptiveCapDecisionRecord,
+    write_adaptive_cap_decisions_jsonl,
+)
 from sloserve.metrics.config_hash import experiment_config_hash
 from sloserve.metrics.records import RequestRecord
 from sloserve.metrics.serialization import RequestRecordPaths, write_request_records
@@ -82,6 +86,8 @@ class BenchmarkResult:
     record_paths: RequestRecordPaths
     completeness_report: CompletenessReport
     completeness_report_path: Path
+    adaptive_decisions: tuple[AdaptiveCapDecisionRecord, ...]
+    adaptive_decision_path: Path | None
 
 
 async def run_benchmark(
@@ -101,6 +107,7 @@ async def run_benchmark(
 
     config_hash = experiment_config_hash(config)
     all_records: list[RequestRecord] = []
+    all_adaptive_decisions: list[AdaptiveCapDecisionRecord] = []
     output_clipper = OutputClipper(config.admission)
 
     async with AsyncExitStack() as sampler_stack:
@@ -110,19 +117,35 @@ async def run_benchmark(
         for repetition_index in range(config.workload.repetitions):
             relative_envelopes = generate_requests(config.workload)
             repetition_start_s = clock()
-            envelopes = tuple(
-                output_clipper.apply(_place_on_clock(envelope, repetition_start_s))
-                for envelope in relative_envelopes
-            )
+            if config.admission.adaptive_clip_enabled:
+                envelopes = tuple(
+                    _place_on_clock(envelope, repetition_start_s) for envelope in relative_envelopes
+                )
+                admission_queue = AdmissionQueue(
+                    router_config=config.router,
+                    backend_config=config.backend,
+                    backend=backend,
+                    policy=build_policy(config),
+                    clock=clock,
+                    sleep=sleep,
+                    admission_config=config.admission,
+                    adaptive_clipper=output_clipper,
+                )
+            else:
+                envelopes = tuple(
+                    output_clipper.apply(_place_on_clock(envelope, repetition_start_s))
+                    for envelope in relative_envelopes
+                )
+                admission_queue = AdmissionQueue(
+                    router_config=config.router,
+                    backend_config=config.backend,
+                    backend=backend,
+                    policy=build_policy(config),
+                    clock=clock,
+                    sleep=sleep,
+                )
 
-            async with AdmissionQueue(
-                router_config=config.router,
-                backend_config=config.backend,
-                backend=backend,
-                policy=build_policy(config),
-                clock=clock,
-                sleep=sleep,
-            ) as queue:
+            async with admission_queue as queue:
                 submission_tasks = [
                     asyncio.create_task(
                         _submit_at_arrival(queue, envelope, clock=clock, sleep=sleep),
@@ -139,6 +162,14 @@ async def run_benchmark(
                         task.cancel()
                     await asyncio.gather(*submission_tasks, return_exceptions=True)
                     raise
+
+                all_adaptive_decisions.extend(
+                    AdaptiveCapDecisionRecord.from_admission(
+                        decision,
+                        repetition_index=repetition_index,
+                    )
+                    for decision in queue.adaptive_decisions
+                )
 
                 # Join before starting the next repetition. Request IDs intentionally repeat,
                 # and request-keyed backend telemetry will be overwritten by the next send.
@@ -166,6 +197,15 @@ async def run_benchmark(
         config.metrics.output_directory / f"{file_stem}-completeness.json",
         completeness_report,
     )
+    adaptive_decisions = tuple(all_adaptive_decisions)
+    adaptive_decision_path = (
+        write_adaptive_cap_decisions_jsonl(
+            config.metrics.output_directory / f"{file_stem}-adaptive-cap-decisions.jsonl",
+            adaptive_decisions,
+        )
+        if config.admission.adaptive_clip_enabled
+        else None
+    )
     return BenchmarkResult(
         records=records,
         formal_records=formal_records,
@@ -173,6 +213,8 @@ async def run_benchmark(
         record_paths=record_paths,
         completeness_report=completeness_report,
         completeness_report_path=completeness_report_path,
+        adaptive_decisions=adaptive_decisions,
+        adaptive_decision_path=adaptive_decision_path,
     )
 
 
@@ -228,8 +270,14 @@ def _join_repetition(
             raise RuntimeError(
                 f"missing admission result for sequence {envelope.sequence_id}"
             ) from exc
-        if result.request_id != envelope.request_id:
+        effective_envelope = result.effective_envelope
+        if (
+            result.request_id != envelope.request_id
+            or result.request_id != effective_envelope.request_id
+        ):
             raise RuntimeError("admission result identity does not match generated request")
+        if result.sequence_id != effective_envelope.sequence_id:
+            raise RuntimeError("effective envelope sequence does not match admission result")
         if result.completion_time_s is None:
             raise RuntimeError(
                 f"terminal admission result lacks completion time: {result.request_id}"
@@ -244,7 +292,7 @@ def _join_repetition(
         )
         joined.append(
             RequestRecord.from_envelope(
-                envelope,
+                effective_envelope,
                 enqueue_time_s=result.enqueue_time_s,
                 dispatch_time_s=result.dispatch_time_s,
                 first_token_time_s=(

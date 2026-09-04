@@ -1,0 +1,94 @@
+{
+  "aggregate": {
+    "clip_applied_count": 6,
+    "depth_ge_1_time_fraction": 0.01714843218197302,
+    "depth_ge_2_time_fraction": 0.006154110178295506,
+    "depth_ge_3_time_fraction": 0.0,
+    "non_l0_clip_eligible_count": 6,
+    "non_l0_decision_count": 27,
+    "non_l0_entry_count": 6,
+    "non_l0_has_clip_eligible_request": true,
+    "non_l0_time_fraction": 0.05115450092213959,
+    "total_time_s": 2556.522825918043
+  },
+  "controller": {
+    "caps": [
+      1536,
+      1024,
+      512
+    ],
+    "clip_source": "learned",
+    "ewma_tau_s": 6.0,
+    "relax_hold_s": 30.0,
+    "relax_thresholds": [
+      0.25,
+      0.75,
+      1.5
+    ],
+    "tighten_thresholds": [
+      1.0,
+      2.0,
+      3.0
+    ]
+  },
+  "evidence_scope": "Deterministic CPU simulation using the expK-B no-clip service-time fit; this is not a real-machine measurement and must not be treated as one.",
+  "per_seed": [
+    {
+      "clip_applied_count": 0,
+      "depth_ge_1_time_fraction": 0.045330927515031205,
+      "depth_ge_2_time_fraction": 0.01082500041277403,
+      "depth_ge_3_time_fraction": 0.0,
+      "non_l0_clip_eligible_count": 0,
+      "non_l0_decision_count": 21,
+      "non_l0_entry_count": 3,
+      "non_l0_time_fraction": 0.18026185241091516,
+      "peak_stable_waiting_depth": 2,
+      "seed": 20250825
+    },
+    {
+      "clip_applied_count": 6,
+      "depth_ge_1_time_fraction": 0.012657756248203192,
+      "depth_ge_2_time_fraction": 0.008790091304617165,
+      "depth_ge_3_time_fraction": 0.0,
+      "non_l0_clip_eligible_count": 6,
+      "non_l0_decision_count": 6,
+      "non_l0_entry_count": 3,
+      "non_l0_time_fraction": 0.0026127259361985703,
+      "peak_stable_waiting_depth": 2,
+      "seed": 11
+    },
+    {
+      "clip_applied_count": 0,
+      "depth_ge_1_time_fraction": 0.0,
+      "depth_ge_2_time_fraction": 0.0,
+      "depth_ge_3_time_fraction": 0.0,
+      "non_l0_clip_eligible_count": 0,
+      "non_l0_decision_count": 0,
+      "non_l0_entry_count": 0,
+      "non_l0_time_fraction": 0.0,
+      "peak_stable_waiting_depth": 0,
+      "seed": 202
+    }
+  ],
+  "service_time_model": {
+    "formula": "S_seconds = 0.01494 * output_tokens + 0.0156",
+    "r_squared": 0.9998,
+    "source": "expK-B no-clip fit"
+  },
+  "trace": {
+    "arrival_process": "poisson",
+    "length_model": "realistic",
+    "max_in_flight": 4,
+    "repetitions_per_seed": 3,
+    "request_rate_rps": 0.08,
+    "seeds": [
+      20250825,
+      11,
+      202
+    ],
+    "stable_depth_method": "Integrate the post-fill waiting-list length over each event delta; a selected request and all immediately fillable slots are excluded.",
+    "time_weighting_window": "first enqueue through final dispatch",
+    "total_requests": 24,
+    "warmup_requests": 4
+  }
+}

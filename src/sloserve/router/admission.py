@@ -8,7 +8,13 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import StrEnum
 
-from sloserve.config import BackendConfig, RouterConfig, SchedulerPolicyName
+from sloserve.config import AdmissionControlConfig, BackendConfig, RouterConfig, SchedulerPolicyName
+from sloserve.router.adaptive_clipping import (
+    AdaptiveClipController,
+    AdaptiveClipDecision,
+    build_adaptive_clip_controller,
+)
+from sloserve.router.clipping import OutputClipper
 from sloserve.router.models import RequestEnvelope
 from sloserve.router.policies.base import SchedulingPolicy
 from sloserve.router.policies.fcfs import FcfsPolicy
@@ -26,7 +32,16 @@ class AdmissionResult:
     enqueue_time_s: float
     dispatch_time_s: float | None
     completion_time_s: float | None
+    effective_envelope: RequestEnvelope
     error_message: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class AdaptiveAdmissionDecision:
+    """One dispatch decision joined to the selected request identity."""
+
+    request_id: str
+    decision: AdaptiveClipDecision
 
 
 class _RequestState(StrEnum):
@@ -60,6 +75,8 @@ class AdmissionQueue:
         policy: SchedulingPolicy | None = None,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        admission_config: AdmissionControlConfig | None = None,
+        adaptive_clipper: OutputClipper | None = None,
     ) -> None:
         if policy is None:
             if router_config.policy is not SchedulerPolicyName.FCFS:
@@ -75,6 +92,16 @@ class AdmissionQueue:
         self._policy = policy
         self._clock = clock
         self._sleep = sleep
+        self._adaptive_controller: AdaptiveClipController | None = None
+        self._adaptive_clipper: OutputClipper | None = None
+        if admission_config is not None and admission_config.adaptive_clip_enabled:
+            if adaptive_clipper is None:
+                raise ValueError("enabled adaptive clipping requires an OutputClipper")
+            self._adaptive_controller = build_adaptive_clip_controller(
+                admission_config,
+                clock=clock,
+            )
+            self._adaptive_clipper = adaptive_clipper
 
         self._condition = asyncio.Condition()
         self._waiting: list[_QueueEntry] = []
@@ -84,6 +111,12 @@ class AdmissionQueue:
         self._started = False
         self._closing = False
         self._closed = False
+        self._adaptive_decisions: list[AdaptiveAdmissionDecision] = []
+
+    @property
+    def adaptive_decisions(self) -> tuple[AdaptiveAdmissionDecision, ...]:
+        """Return dispatch decisions accumulated by an enabled adaptive controller."""
+        return tuple(self._adaptive_decisions)
 
     async def __aenter__(self) -> AdmissionQueue:
         await self.start()
@@ -123,6 +156,7 @@ class AdmissionQueue:
                     enqueue_time_s=enqueue_time_s,
                     dispatch_time_s=None,
                     completion_time_s=self._clock(),
+                    effective_envelope=envelope,
                     error_message="admission waiting queue is full",
                 )
 
@@ -206,6 +240,22 @@ class AdmissionQueue:
                     error_message=self._timeout_error_message(),
                 )
                 continue
+            if self._adaptive_controller is not None:
+                adaptive_clipper = self._adaptive_clipper
+                if adaptive_clipper is None:
+                    raise RuntimeError("adaptive clipper was not configured")
+                stable_waiting_depth = self._stable_waiting_depth_after_selected_locked()
+                decision = self._adaptive_controller.update(stable_waiting_depth)
+                entry.envelope = adaptive_clipper.apply_adaptive_cap(
+                    entry.envelope,
+                    decision.selected_cap,
+                )
+                self._adaptive_decisions.append(
+                    AdaptiveAdmissionDecision(
+                        request_id=entry.envelope.request_id,
+                        decision=decision,
+                    )
+                )
             entry.state = _RequestState.IN_FLIGHT
             entry.dispatch_time_s = self._clock()
             entry.backend_task = asyncio.create_task(
@@ -298,6 +348,12 @@ class AdmissionQueue:
     def _in_flight_entries_locked(self) -> list[_QueueEntry]:
         return [entry for entry in self._entries.values() if entry.state is _RequestState.IN_FLIGHT]
 
+    def _stable_waiting_depth_after_selected_locked(self) -> int:
+        """Project waiting depth after every currently free slot is synchronously filled."""
+        in_flight_count = len(self._in_flight_entries_locked())
+        remaining_free_slots = self._max_in_flight - in_flight_count - 1
+        return max(0, len(self._waiting) - remaining_free_slots)
+
     def _timeout_error_message(self) -> str:
         return f"request exceeded total timeout of {self._request_timeout_s}s"
 
@@ -323,6 +379,7 @@ class AdmissionQueue:
                 enqueue_time_s=entry.enqueue_time_s,
                 dispatch_time_s=entry.dispatch_time_s,
                 completion_time_s=self._clock(),
+                effective_envelope=entry.envelope,
                 error_message=error_message,
             )
         )

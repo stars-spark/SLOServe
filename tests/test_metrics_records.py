@@ -9,14 +9,17 @@ from pathlib import Path
 
 from sloserve.config import MetricsConfig, SchedulerPolicyName, load_config
 from sloserve.metrics import (
+    AdaptiveCapDecisionRecord,
     RequestRecord,
     experiment_config_hash,
     read_request_records_csv,
     read_request_records_jsonl,
+    write_adaptive_cap_decisions_jsonl,
     write_request_records,
     write_request_records_csv,
     write_request_records_jsonl,
 )
+from sloserve.router.adaptive_clipping import AdaptiveClipLevel, AdaptiveClipTrigger
 from sloserve.router.models import RequestClass, RequestEnvelope
 from sloserve.workload.dispatcher import DispatchStatus
 
@@ -178,3 +181,26 @@ def test_experiment_config_hash_is_deterministic_and_sensitive_to_changes() -> N
     assert first == experiment_config_hash(config)
     assert len(first) == 64
     assert first != experiment_config_hash(changed_config)
+
+
+def test_adaptive_cap_sidecar_writer_preserves_required_fact_order(tmp_path: Path) -> None:
+    decision = AdaptiveCapDecisionRecord(
+        request_id="request-000007",
+        repetition_index=2,
+        decision_time_s=12.5,
+        q_inst=3,
+        q_bar=1.25,
+        old_level=AdaptiveClipLevel.L1,
+        new_level=AdaptiveClipLevel.L3,
+        selected_cap=512,
+        trigger_reason=AdaptiveClipTrigger.TIGHTEN_THRESHOLD,
+    )
+
+    output = write_adaptive_cap_decisions_jsonl(tmp_path / "decisions.jsonl", (decision,))
+
+    assert output.read_text(encoding="utf-8") == (
+        '{"request_id":"request-000007","repetition_index":2,'
+        '"decision_time_s":12.5,"q_inst":3,"q_bar":1.25,'
+        '"old_level":"L1","new_level":"L3","selected_cap":512,'
+        '"trigger_reason":"tighten_threshold"}\n'
+    )

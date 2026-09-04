@@ -82,3 +82,37 @@ def test_learned_source_uses_visible_features_not_true_target(tmp_path: Path) ->
     assert first.effective_max_output_tokens == 1024
     assert second.effective_max_output_tokens == 1024
     assert visible_short.effective_max_output_tokens == 1800
+
+
+def test_adaptive_cap_uses_selected_level_without_changing_fixed_cap() -> None:
+    config = AdmissionControlConfig(
+        clip_enabled=True,
+        clip_max_tokens=512,
+        clip_source=ClipSource.ADVERTISED,
+        adaptive_clip_enabled=True,
+    )
+    clipper = OutputClipper(config)
+
+    l0 = clipper.apply_adaptive_cap(_request(), None)
+    l1 = clipper.apply_adaptive_cap(_request(), 1536)
+    fixed = clipper.apply(_request())
+
+    assert l0.backend_max_output_tokens is None
+    assert l1.effective_max_output_tokens == 1536
+    assert fixed.effective_max_output_tokens == 512
+
+
+def test_adaptive_cap_requires_both_visible_and_true_length_to_exceed_cap() -> None:
+    clipper = OutputClipper(
+        AdmissionControlConfig(
+            clip_enabled=True,
+            clip_source=ClipSource.ADVERTISED,
+            adaptive_clip_enabled=True,
+        )
+    )
+
+    visible_short = clipper.apply_adaptive_cap(_request(advertised=1000), 1024)
+    truly_short = clipper.apply_adaptive_cap(_request(target=1000), 1024)
+
+    assert visible_short.backend_max_output_tokens is None
+    assert truly_short.backend_max_output_tokens is None
