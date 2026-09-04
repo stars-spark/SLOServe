@@ -130,7 +130,9 @@ def test_streaming_without_usage_falls_back_to_content_delta_count() -> None:
 def test_backend_sends_clipped_cap_without_overwriting_original_target() -> None:
     async def scenario() -> None:
         def handler(request: httpx.Request) -> httpx.Response:
-            assert json.loads(request.content)["max_tokens"] == 2
+            body = json.loads(request.content)
+            assert body["max_tokens"] == 2
+            assert body["min_tokens"] == 2
             return _sse_response(
                 request,
                 [
@@ -139,7 +141,7 @@ def test_backend_sends_clipped_cap_without_overwriting_original_target() -> None
                 ],
             )
 
-        request = replace(_request(), backend_max_output_tokens=2)
+        request = replace(_request(), backend_max_output_tokens=2, force_exact_output_tokens=True)
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
             backend = HttpStreamingBackend(backend_config=_backend_config(), client=client)
             await backend.send(request)

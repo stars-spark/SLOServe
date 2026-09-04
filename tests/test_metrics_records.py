@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import csv
+import json
 from dataclasses import fields
 from pathlib import Path
 
@@ -89,6 +91,32 @@ def test_jsonl_and_csv_round_trip_every_field(tmp_path: Path) -> None:
     assert csv_path.read_text(encoding="utf-8").splitlines()[0].split(",") == [
         field.name for field in fields(RequestRecord)
     ]
+
+
+def test_legacy_request_files_remain_readable_after_clipping_fields(tmp_path: Path) -> None:
+    original = _record("c" * 64)
+    added = {"requested_output_tokens", "backend_max_output_tokens", "finish_reason"}
+
+    current_jsonl = write_request_records_jsonl(tmp_path / "current.jsonl", (original,))
+    raw = json.loads(current_jsonl.read_text(encoding="utf-8"))
+    for field_name in added:
+        raw.pop(field_name)
+    legacy_jsonl = tmp_path / "legacy.jsonl"
+    legacy_jsonl.write_text(json.dumps(raw) + "\n", encoding="utf-8")
+
+    current_csv = write_request_records_csv(tmp_path / "current.csv", (original,))
+    with current_csv.open(encoding="utf-8", newline="") as source:
+        csv_row = next(csv.DictReader(source))
+    for field_name in added:
+        csv_row.pop(field_name)
+    legacy_csv = tmp_path / "legacy.csv"
+    with legacy_csv.open("w", encoding="utf-8", newline="") as output:
+        writer = csv.DictWriter(output, fieldnames=list(csv_row))
+        writer.writeheader()
+        writer.writerow(csv_row)
+
+    assert read_request_records_jsonl(legacy_jsonl) == (original,)
+    assert read_request_records_csv(legacy_csv) == (original,)
 
 
 def test_undispatched_rejected_record_round_trips_jsonl_and_csv(tmp_path: Path) -> None:

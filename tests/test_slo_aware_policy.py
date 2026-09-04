@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -135,6 +136,26 @@ def test_advertised_length_source_does_not_read_true_target() -> None:
     assert policy._estimated_output_tokens(shorter) == 2048.0
     assert policy._estimated_output_tokens(longer) == 2048.0
     assert _policy()._estimated_output_tokens(shorter) != _policy()._estimated_output_tokens(longer)
+
+
+def test_applied_backend_cap_bounds_service_estimate_without_leaking_unclipped_target() -> None:
+    policy = _policy(length_source=LengthSource.ADVERTISED)
+    clipped = _request(
+        "clipped",
+        0,
+        max_output_tokens=1800,
+        advertised_cap_tokens=2048,
+    )
+    clipped = replace(clipped, backend_max_output_tokens=1024)
+    unclipped = _request(
+        "unclipped",
+        1,
+        max_output_tokens=100,
+        advertised_cap_tokens=2048,
+    )
+
+    assert policy._estimated_output_tokens(clipped) == 1024.0
+    assert policy._estimated_output_tokens(unclipped) == 2048.0
 
 
 def test_learned_length_source_uses_loaded_predictor_without_true_target(tmp_path: Path) -> None:

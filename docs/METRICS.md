@@ -27,6 +27,18 @@ PyTorch、vLLM、模型等值必须在第 7 步从实际运行环境采集并由
 也必须为 `null`，status 不得为 success。success 记录必须同时有 dispatch、first token，且
 `output_tokens >= 1`。这样 rejected、排队中 timeout/cancelled 不需要伪造不存在的后端事件。
 
+Week 6 的截断实验在同一事实记录中追加三个可选字段，并保持此前保存的 JSONL/CSV 可读：
+
+- `requested_output_tokens`：工作负载生成的原始输出目标，截断时不得覆盖。
+- `backend_max_output_tokens`：实际发给 vLLM 的 `max_tokens`；小于原始目标时表示外层应用了 cap。
+- `finish_reason`：后端返回的停止原因。只有同时满足“应用了 cap”且 `finish_reason=length`，才记为
+  实际因外部 cap 截断；仅应用 cap 但模型提前自然停止，不能算实际截断。
+
+`max_tokens` 本身只表示生成上限，并不保证模型生成到该长度。需要把合成目标解释为实际输出长度的
+实验必须在 `realistic_length.force_exact_output_tokens=true` 下运行；HTTP backend 此时发送
+`min_tokens == max_tokens == effective cap`。该开关默认关闭，以保持早期实验行为不变，并写入 sweep
+聚合元数据。未开启该开关的旧 expK-A 只能解释为“目标上限代理”实验，不能称作真实长度 oracle。
+
 ## 请求级指标
 
 以下差值均以秒为单位：
@@ -43,6 +55,12 @@ PyTorch、vLLM、模型等值必须在第 7 步从实际运行环境采集并由
 
 TTFT、TPOT、端到端延迟和排队等待的 P50/P95/P99 只对 success 请求计算；TPOT 还应用上述
 `output_tokens >= 2` 条件。空集合的分位数为 `null`。
+
+排队等待均值与分位数使用同一 success 请求集合。截断实验额外报告：cap-applied count/rate、
+realized-truncation count/rate，以及被施加 cap 的请求平均
+`requested_output_tokens - backend_max_output_tokens`。两个 rate 的分母均为有 Week 6 截断字段的
+全部正式 offered requests（包括失败或拒绝）；旧记录没有这些字段时 rate 为 `null`，不能误报为 0。
+平均削减量表示配置允许少生成的上限，不等同于模型实际少生成量；必须和 `finish_reason` 指标一起解释。
 
 ## 分位数
 

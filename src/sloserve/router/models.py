@@ -27,6 +27,7 @@ class RequestEnvelope:
     advertised_cap_tokens: int | None = None
     prompt_kind: str | None = None
     backend_max_output_tokens: int | None = None
+    force_exact_output_tokens: bool = False
 
     def __post_init__(self) -> None:
         """Reject invalid metadata at the queue boundary."""

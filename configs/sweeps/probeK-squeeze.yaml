@@ -1,0 +1,22 @@
+# Week 6 Step 0 probe (squeezed KV): deliberately shrink the KV budget to emulate the
+# memory pressure a much larger model would create on this single 12 GB card. If preemptions
+# and high KV usage appear here, load-aware scheduling has a real signal to act on.
+base_config: ../base.yaml
+base_overrides:
+  server:
+    gpu_memory_utilization: 0.18
+  router:
+    policy: fcfs
+    max_in_flight: 16
+  workload:
+    arrival_process: poisson
+    request_rate_rps: 10.0
+    total_requests: 120
+    interactive_fraction: 0.1
+    random_seed: 20250825
+    warmup_requests: 5
+    repetitions: 1
+  metrics:
+    output_directory: results/raw/week6-probe-squeeze
+points:
+  - {label: squeeze, policy: fcfs}

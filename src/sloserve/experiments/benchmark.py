@@ -202,6 +202,7 @@ def _place_on_clock(envelope: RequestEnvelope, repetition_start_s: float) -> Req
         advertised_cap_tokens=envelope.advertised_cap_tokens,
         prompt_kind=envelope.prompt_kind,
         backend_max_output_tokens=envelope.backend_max_output_tokens,
+        force_exact_output_tokens=envelope.force_exact_output_tokens,
     )
 
 

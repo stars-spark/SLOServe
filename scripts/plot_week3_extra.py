@@ -251,18 +251,66 @@ def length_source_comparison() -> None:
     right.set_xticks(list(x))
     right.set_xticklabels(labels)
     right.set_ylabel("End-to-end latency (s)")
-    right.set_title("Latency by length estimate\noracle lowest, coarse learned highest")
+    right.set_title("Latency by target-cap estimate\ndiagnostic run; not actual-length oracle")
     right.legend()
     right.grid(axis="y", alpha=0.25)
     figure.suptitle(
-        "True length (oracle) helps SLO-aware scheduling; a coarse learned predictor "
-        "underperforms even the naive cap (low MAE != good ordering)",
+        "Legacy target-cap proxy comparison (actual output often stopped before the cap)",
         fontsize=9,
     )
     figure.tight_layout()
     figure.savefig(OUT / "length-source.png", dpi=160)
     plt.close(figure)
     print("wrote length-source.png")
+
+
+def clipping_tradeoff() -> None:
+    """expK-B: queue delay versus the utility cost of clipping the heavy output tail."""
+    import json
+
+    analysis = json.loads(Path("results/raw/week6-expK-B/analysis.json").read_text())
+    arms = [a for a in ("no-clip", "clip1536", "clip1024", "clip512") if a in analysis["arms"]]
+    labels = [a.replace("clip", "clip ") for a in arms]
+
+    def agg(arm: str, field: str, key: str = "mean") -> float:
+        entry = analysis["arms"][arm]["aggregates"][field]
+        return float(entry[key]) if entry else 0.0
+
+    figure, (left, right) = plt.subplots(1, 2, figsize=(10.5, 4))
+    x = range(len(arms))
+    wait = [agg(a, "queue_wait_mean_s") for a in arms]
+    wait_sd = [agg(a, "queue_wait_mean_s", "std") for a in arms]
+    left.bar(x, wait, yerr=wait_sd, capsize=6, color=COLORS["slo_aware"])
+    left.set_xticks(list(x))
+    left.set_xticklabels(labels)
+    left.set_ylabel("Mean queue wait (s)")
+    left.set_title(
+        "Queue delay falls as the tail is clipped\n(FCFS, realistic heavy tail, rps=0.17)"
+    )
+    left.grid(axis="y", alpha=0.25)
+
+    clipped = [agg(a, "clip_applied_rate") * 100 for a in arms]
+    second = [analysis["arms"][a]["mg1"]["second_moment_service_s2"] for a in arms]
+    right.bar(x, clipped, color=COLORS["fcfs"], label="requests clipped (%)")
+    right.set_xticks(list(x))
+    right.set_xticklabels(labels)
+    right.set_ylabel("Requests clipped (%)", color=COLORS["fcfs"])
+    right.set_xlabel("Admission cap")
+    twin = right.twinx()
+    twin.plot(x, second, "o-", color="#c67f0c", label="E[S^2]")
+    twin.set_ylabel("E[S$^2$] (s$^2$)", color="#c67f0c")
+    right.set_title(
+        "The cost, and the queueing mechanism\nclipping cuts E[S$^2$], which drives the wait"
+    )
+    right.grid(axis="y", alpha=0.2)
+    figure.suptitle(
+        "Clipping the heavy output tail trades a reported utility cost for lower queue delay",
+        fontsize=9,
+    )
+    figure.tight_layout()
+    figure.savefig(OUT / "clipping-tradeoff.png", dpi=160)
+    plt.close(figure)
+    print("wrote clipping-tradeoff.png")
 
 
 def main() -> None:
@@ -273,6 +321,7 @@ def main() -> None:
     multilevel_aging()
     adaptive_ceiling()
     length_source_comparison()
+    clipping_tradeoff()
 
 
 if __name__ == "__main__":

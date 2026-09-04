@@ -1,0 +1,24 @@
+# Week 6 Step 0 probe (high concurrency + squeezed KV): raise max_num_seqs and router
+# concurrency so ~128 long batch sequences compete for a deliberately small KV budget,
+# emulating the memory-pressure regime of large-model serving. This is the decisive check
+# for whether preemptions/KV pressure can be produced at all on this card.
+base_config: ../base.yaml
+base_overrides:
+  server:
+    gpu_memory_utilization: 0.16
+    max_num_seqs: 128
+  router:
+    policy: fcfs
+    max_in_flight: 128
+  workload:
+    arrival_process: poisson
+    request_rate_rps: 20.0
+    total_requests: 200
+    interactive_fraction: 0.1
+    random_seed: 20250825
+    warmup_requests: 5
+    repetitions: 1
+  metrics:
+    output_directory: results/raw/week6-probe-concurrent
+points:
+  - {label: concurrent, policy: fcfs}

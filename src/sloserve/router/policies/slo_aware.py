@@ -44,19 +44,26 @@ class SloAwarePolicy(SchedulingPolicy):
     def _estimated_output_tokens(self, request: RequestEnvelope) -> float:
         """Return the output length visible through the configured information boundary."""
         if self.length_source is LengthSource.TRUE:
-            return float(request.max_output_tokens)
-        if self.length_source is LengthSource.ADVERTISED:
-            return float(request.advertised_cap_tokens or request.max_output_tokens)
-        if self.length_source is LengthSource.LEARNED:
+            estimate = float(request.max_output_tokens)
+        elif self.length_source is LengthSource.ADVERTISED:
+            estimate = float(request.advertised_cap_tokens or request.max_output_tokens)
+        elif self.length_source is LengthSource.LEARNED:
             if self._length_predictor is None:
                 raise RuntimeError("learned length predictor was not loaded")
-            return self._length_predictor.predict(
+            estimate = self._length_predictor.predict(
                 request.request_class,
                 request.input_tokens,
                 request.prompt_kind,
                 request.advertised_cap_tokens or request.max_output_tokens,
             )
-        raise ValueError(f"unsupported length source: {self.length_source}")
+        else:
+            raise ValueError(f"unsupported length source: {self.length_source}")
+        # Once admission applies a cap, its exact backend limit is known and bounds service.
+        # Do not apply this minimum without a real clip: doing so would leak the hidden target
+        # into advertised/learned estimates when clipping is disabled.
+        if request.clip_applied:
+            return min(estimate, float(request.effective_max_output_tokens))
+        return estimate
 
     def _key(
         self, request: RequestEnvelope, now_s: float, threshold: float

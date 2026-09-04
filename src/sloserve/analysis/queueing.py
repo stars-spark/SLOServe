@@ -23,9 +23,19 @@ class LinearServiceFit:
 
 @dataclass(frozen=True, slots=True)
 class Mg1Estimate:
-    """Pollaczek-Khinchine mean-wait estimate for one empirical length sample."""
+    """Pollaczek-Khinchine mean-wait estimate for one empirical length sample.
+
+    ``concurrency`` above one selects a deliberately crude bridge to the real system, which
+    serves up to ``max_in_flight`` requests at once: every fitted service time is divided by
+    ``concurrency``, so the queue is modelled as a single server that is ``concurrency`` times
+    faster. This is *not* M/G/c -- Pollaczek-Khinchine has no exact M/G/c form -- and it
+    understates waiting because it lets one long request borrow the whole aggregate rate. It is
+    used only because the unscaled single-server model is vacuous here: the measured system is
+    plainly stable while a c=1 model reports utilization above two and refuses to predict at all.
+    """
 
     arrival_rate_rps: float
+    concurrency: int
     mean_service_s: float
     second_moment_service_s2: float
     utilization: float
@@ -83,16 +93,23 @@ def estimate_mg1_wait(
     *,
     arrival_rate_rps: float,
     service_fit: LinearServiceFit,
+    concurrency: int = 1,
 ) -> Mg1Estimate:
-    """Estimate mean FCFS wait; return null wait when the M/G/1 model is unstable."""
+    """Estimate mean FCFS wait; return null wait when the M/G/1 model is unstable.
+
+    ``concurrency`` scales the fitted service times by ``1 / concurrency``; see ``Mg1Estimate``
+    for why that approximation is used and what it costs.
+    """
     if not output_lengths:
         raise ValueError("M/G/1 estimation requires at least one output length")
     if arrival_rate_rps <= 0.0 or not math.isfinite(arrival_rate_rps):
         raise ValueError("arrival_rate_rps must be finite and positive")
+    if concurrency < 1:
+        raise ValueError("concurrency must be at least one")
     if any(length < 1 for length in output_lengths):
         raise ValueError("output lengths must be positive")
     service_times = [
-        service_fit.seconds_per_output_token * length + service_fit.intercept_s
+        (service_fit.seconds_per_output_token * length + service_fit.intercept_s) / concurrency
         for length in output_lengths
     ]
     if any(
@@ -109,6 +126,7 @@ def estimate_mg1_wait(
     )
     return Mg1Estimate(
         arrival_rate_rps=arrival_rate_rps,
+        concurrency=concurrency,
         mean_service_s=mean_service,
         second_moment_service_s2=second_moment,
         utilization=utilization,

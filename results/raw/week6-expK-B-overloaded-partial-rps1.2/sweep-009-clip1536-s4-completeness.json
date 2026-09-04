@@ -1,0 +1,168 @@
+{
+  "scope_note": "仅管线验证，不作策略性能比较",
+  "request_scope": "formal requests only; warmup records are persisted but excluded",
+  "metrics": {
+    "ttft_p50_s": {
+      "value": 45.54763784851821,
+      "missing_reason": null
+    },
+    "ttft_p95_s": {
+      "value": 75.74005287980981,
+      "missing_reason": null
+    },
+    "ttft_p99_s": {
+      "value": 84.43483790544633,
+      "missing_reason": null
+    },
+    "tpot_p50_s": {
+      "value": 0.009662494537424873,
+      "missing_reason": null
+    },
+    "tpot_p95_s": {
+      "value": 0.010467043565061476,
+      "missing_reason": null
+    },
+    "tpot_p99_s": {
+      "value": 0.010612129116071043,
+      "missing_reason": null
+    },
+    "end_to_end_p50_s": {
+      "value": 50.877036483161646,
+      "missing_reason": null
+    },
+    "end_to_end_p95_s": {
+      "value": 88.45995939741988,
+      "missing_reason": null
+    },
+    "end_to_end_p99_s": {
+      "value": 100.01420022834282,
+      "missing_reason": null
+    },
+    "queue_wait_p50_s": {
+      "value": 45.52221105951685,
+      "missing_reason": null
+    },
+    "queue_wait_p95_s": {
+      "value": 75.71194605480923,
+      "missing_reason": null
+    },
+    "queue_wait_p99_s": {
+      "value": 84.40437858744554,
+      "missing_reason": null
+    },
+    "formal_request_count": {
+      "value": 180,
+      "missing_reason": null
+    },
+    "token_throughput_per_s": {
+      "value": 358.7590247378636,
+      "missing_reason": null
+    },
+    "success_count": {
+      "value": 180,
+      "missing_reason": null
+    },
+    "error_count": {
+      "value": 0,
+      "missing_reason": null
+    },
+    "timeout_count": {
+      "value": 0,
+      "missing_reason": null
+    },
+    "cancelled_count": {
+      "value": 0,
+      "missing_reason": null
+    },
+    "rejected_count": {
+      "value": 0,
+      "missing_reason": null
+    },
+    "clip_applied_count": {
+      "value": 3,
+      "missing_reason": null
+    },
+    "clip_applied_rate": {
+      "value": 0.016666666666666666,
+      "missing_reason": null
+    },
+    "realized_truncation_count": {
+      "value": 3,
+      "missing_reason": null
+    },
+    "realized_truncation_rate": {
+      "value": 0.016666666666666666,
+      "missing_reason": null
+    },
+    "mean_cap_reduction_tokens": {
+      "value": 512.0,
+      "missing_reason": null
+    },
+    "terminal_count_matches_request_count": {
+      "value": true,
+      "missing_reason": null
+    },
+    "longest_queue_wait_s": {
+      "value": 85.53856349034322,
+      "missing_reason": null
+    },
+    "queue_wait_mean_s": {
+      "value": 41.61824950323494,
+      "missing_reason": null
+    },
+    "slo_overall": {
+      "value": {
+        "request_count": 180,
+        "met_count": 3,
+        "rate": 0.016666666666666666
+      },
+      "missing_reason": null
+    },
+    "slo_attainment_gap": {
+      "value": 0.027777777777777776,
+      "missing_reason": null
+    },
+    "jain_fairness_index": {
+      "value": 0.5,
+      "missing_reason": null
+    },
+    "slo_interactive": {
+      "value": {
+        "request_count": 72,
+        "met_count": 0,
+        "rate": 0.0
+      },
+      "missing_reason": null
+    },
+    "slo_batch": {
+      "value": {
+        "request_count": 108,
+        "met_count": 3,
+        "rate": 0.027777777777777776
+      },
+      "missing_reason": null
+    }
+  },
+  "gpu": {
+    "utilization_percent": {
+      "value": {
+        "mean": 50.32576617480136,
+        "peak": 63.0
+      },
+      "missing_reason": null
+    },
+    "memory_used_mib": {
+      "value": {
+        "peak": 6136.0
+      },
+      "missing_reason": null
+    },
+    "power_w": {
+      "value": {
+        "mean": 81.8279114642451,
+        "peak": 92.67
+      },
+      "missing_reason": null
+    }
+  }
+}

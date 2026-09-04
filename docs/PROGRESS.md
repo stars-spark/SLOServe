@@ -267,3 +267,65 @@ evaluation (experiments A–E, throughput–latency / rate–P99 / SLO-attainmen
   documented limitations: one GPU, one small model, fixed arrivals, no multi-GPU or KV-cache-aware
   routing, coarse token-seconds length estimates, high saturation variance, and single-seed
   experiment D.
+
+## 2026-09-02 — Week 4 complete: Poisson arrivals and multi-level aging
+
+- Added reproducible Poisson arrivals and generalized hard aging to 1/2/3/5 graduated tiers while
+  preserving exact K=1 behavior. CPU checks and the real-GPU 24-point six-seed sweep passed.
+- Multi-level aging did not improve interactive SLO: K=1 reached 0.48±0.20; K=2/3/5 reached
+  0.28±0.13, 0.36±0.23, and 0.37±0.23. Higher K shortened the worst wait and improved batch SLO,
+  so it is a fairness-versus-urgency control rather than an SLO recovery mechanism.
+- The result is retained as a negative finding with request-level evidence under `results/raw/`.
+
+## 2026-09-03 — Week 5 complete: adaptive aging ceiling
+
+- Implemented and tested a median-queue-wait adaptive ceiling with floor/cap bounds, then compared
+  fixed 3/10/30-second thresholds and two adaptive caps over six seeds (30 real-GPU points).
+- The adaptive variants failed on both objectives: interactive SLO was 0.39–0.40 versus 0.83–0.91
+  for fixed thresholds, and their longest waits were worse. Poisson bursts inject many zero-wait
+  requests, pulling the median and threshold in the wrong direction.
+- The useful result was configuration diagnosis: increasing the fixed threshold from 3 seconds to
+  10–30 seconds raised interactive SLO and reduced run-to-run variance substantially.
+
+## 2026-09-03/04 — Week 6 handoff: expK-A interpretation withdrawn; expK-B resumed
+
+- Added a realistic heavy-tailed output-length mixture, an independently trained bucket-median
+  predictor, and true/advertised/learned information boundaries. The first expK-A run was invalid
+  because benchmark reclocking dropped the new fields; this was fixed, regression-tested, and the
+  full 18-point sweep was rerun rather than hiding or reusing contaminated data.
+- The field-preserving expK-A rerun observed interactive SLO 0.74±0.17 for the sampled target-cap
+  source, 0.65±0.18 for the advertised constant, and 0.51±0.17 for the learned predictor. A later
+  raw-fact audit found target-to-realized-length correlation only ~0.33 and just 202/1080 formal
+  requests reached their target. Since vLLM treats `max_tokens` as a ceiling, the oracle/true-length
+  interpretation is withdrawn; retain these numbers only as a target-cap-proxy diagnostic.
+- Commit `979dfa4` adds default-off learned max-token clipping, preserves original target versus
+  backend cap in raw facts, reports queue mean plus cap/truncation/token-reduction costs, keeps old
+  JSONL/CSV readable, adds a qualitative M/G/1 module, and defines the 24-point six-seed
+  `configs/sweeps/expK-B-clipping.yaml`. All 130 tests and required checks pass.
+- Added default-off `realistic_length.force_exact_output_tokens`; the backend then sends matching
+  vLLM `min_tokens` and effective `max_tokens`. A real probe confirmed ordinary cap 512 stopped at
+  423 tokens, while forced mode realized 512 with `finish_reason=length`. The first seven cap-proxy
+  points are preserved under `week6-expK-B-invalid-cap-proxy/` and must not enter final analysis.
+- Exact-length rps=1.2 was ~3x over capacity, so the overloaded partial is preserved separately and
+  the stable operating point was recalibrated to rps=0.17. The tractable final design is four arms
+  × three seeds. Nine of twelve points (no-clip, 1536, 1024) are complete; the three 512 points are
+  resuming under `week6-expK-B-remainder/`. Do not publish a clipping conclusion until they finish,
+  are merged, and all required checks pass.
+- The attempted Notion overview correction after the valid expK-A rerun failed because one table
+  row no longer matched. The repository docs and commit `ad58133` contain the authoritative result;
+  update the Notion W6 overview from these facts when that connector is next available.
+- ExpK-B is complete: all twelve points (four caps × three seeds) finished under the recalibrated
+  rps=0.17 operating point and the thermally constrained power profile, peaking at 63 °C GPU and
+  76 °C CPU. Clipping to 512 tokens cuts mean queue wait 10.6x (2.78 → 0.26 s) and raises
+  interactive SLO attainment from 0.26 to 0.73, at the cost of truncating 43.1% of requests by
+  ~1019 tokens each and losing 36% of token throughput. Mean service falls 1.75x while E[S²] falls
+  2.94x, confirming the variance-driven mechanism rather than a capacity effect.
+- The M/G/1 module now takes an explicit `concurrency` argument read from `max_in_flight`, because
+  the literal single-server model reported utilization above 2.6 on every arm and refused to
+  predict while the measured system was plainly stable. Service times are divided by concurrency;
+  this is not M/G/c and over-predicts wait roughly two-fold, so it is documented and used only as a
+  qualitative trend check.
+- Section L of `docs/REPORT.md`, the README Week-6 paragraph, and
+  `results/figures/clipping-tradeoff.png` now carry this result with its boundaries. Absolute
+  latencies in section L are not comparable with expK-A because the power profile changed between
+  them; only within-section comparisons are valid.

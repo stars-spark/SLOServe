@@ -1,5 +1,5 @@
 # Experiment K-A: isolate the SLO-aware estimator's output-length information source under
-# a realistic heavy-tailed workload. The true target is sent to the backend, while prompt kind
+# a realistic heavy-tailed workload. The exact target is realized by the backend, while prompt kind
 # and a loose advertised cap define the scheduler-visible features. Each source uses the same
 # six independent evaluation seeds; the learned artifact is trained with seed 999.
 base_config: ../base.yaml
@@ -21,11 +21,12 @@ base_overrides:
     realistic_length:
       advertised_cap_tokens: 2048
       clamp_max: 2048
+      force_exact_output_tokens: true
   slo_aware:
     aging_threshold_s: 3.0
     length_estimator_path: results/artifacts/length-predictor.json
   metrics:
-    output_directory: results/raw/week6-expK-A
+    output_directory: results/raw/week6-expK-A-exact
 
 points:
   - {label: true-s1, length_source: "true", random_seed: 20250825}

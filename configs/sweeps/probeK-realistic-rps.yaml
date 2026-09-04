@@ -1,0 +1,21 @@
+# Week 6 smoke: find the saturation rps for the REALISTIC (heavy-tailed, long-output) workload
+# so expK-A runs at a saturating-but-not-collapsed point. source=true, single seed, short.
+base_config: ../base.yaml
+base_overrides:
+  router: {policy: slo_aware, max_in_flight: 4}
+  workload:
+    arrival_process: poisson
+    total_requests: 24
+    interactive_fraction: 0.5
+    random_seed: 20250825
+    warmup_requests: 4
+    repetitions: 1
+    length_model: realistic
+    realistic_length: {advertised_cap_tokens: 2048, clamp_max: 2048}
+  slo_aware: {aging_threshold_s: 3.0, length_source: "true"}
+  metrics: {output_directory: results/raw/week6-probe-realistic}
+points:
+  - {label: rps04, request_rate_rps: 0.4}
+  - {label: rps06, request_rate_rps: 0.6}
+  - {label: rps09, request_rate_rps: 0.9}
+  - {label: rps15, request_rate_rps: 1.5}

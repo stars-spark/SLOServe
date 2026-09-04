@@ -1,0 +1,22 @@
+# Week 6 Step 0 probe: does our operating point actually expose KV-cache pressure and
+# preemptions for the external layer to react to? Not an evaluation — just a phenomenon check.
+# Push hard: high arrival rate, full router concurrency into vLLM, and a batch-heavy mix
+# (long outputs) so the KV cache is stressed. Single run; no seeds/repetitions needed.
+base_config: ../base.yaml
+base_overrides:
+  router:
+    policy: fcfs
+    max_in_flight: 16
+  workload:
+    arrival_process: poisson
+    request_rate_rps: 10.0
+    total_requests: 120
+    interactive_fraction: 0.2
+    random_seed: 20250825
+    warmup_requests: 5
+    repetitions: 1
+  metrics:
+    output_directory: results/raw/week6-probe
+
+points:
+  - {label: probe-hi, policy: fcfs}

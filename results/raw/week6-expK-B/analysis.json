@@ -1,0 +1,179 @@
+{
+  "scope": "M/G/1 is a qualitative trend baseline only: SLOServe uses max_in_flight=4 and vLLM continuous batching, not one FCFS server.",
+  "arrival_rate_rps": 0.17,
+  "baseline_service_fit": {
+    "seconds_per_output_token": 0.014935859427027336,
+    "intercept_s": 0.015603071117162415,
+    "r_squared": 0.999802319848261,
+    "sample_count": 216
+  },
+  "arms": {
+    "no-clip": {
+      "seed_count": 3,
+      "aggregates": {
+        "queue_wait_mean_s": {
+          "mean": 2.7786243948609504,
+          "std": 2.6387722100612176,
+          "n": 3
+        },
+        "queue_wait_p99_s": {
+          "mean": 15.687219064168554,
+          "std": 6.5293770249098495,
+          "n": 3
+        },
+        "end_to_end_p99_s": {
+          "mean": 45.06486949151682,
+          "std": 4.798556894568654,
+          "n": 3
+        },
+        "slo_overall_rate": {
+          "mean": 0.4537037037037037,
+          "std": 0.09644753081481323,
+          "n": 3
+        },
+        "slo_interactive_rate": {
+          "mean": 0.25939849624060146,
+          "std": 0.11796766451892035,
+          "n": 3
+        },
+        "token_throughput_per_s": {
+          "mean": 146.5906307108522,
+          "std": 22.816349594755103,
+          "n": 3
+        },
+        "clip_applied_rate": {
+          "mean": 0.0,
+          "std": 0.0,
+          "n": 3
+        },
+        "realized_truncation_rate": {
+          "mean": 0.0,
+          "std": 0.0,
+          "n": 3
+        },
+        "mean_cap_reduction_tokens": null
+      },
+      "mg1": {
+        "mean_service_s": 15.448702151569284,
+        "second_moment_service_s2": 343.4125346345746,
+        "utilization": 2.6262793657667785,
+        "stable": false,
+        "mean_queue_wait_s": null
+      }
+    },
+    "clip1536": {
+      "seed_count": 3,
+      "aggregates": {
+        "queue_wait_mean_s": {
+          "mean": 2.387264172212124,
+          "std": 2.1461317015883057,
+          "n": 3
+        },
+        "queue_wait_p99_s": {
+          "mean": 12.785994606832295,
+          "std": 3.777880268130725,
+          "n": 3
+        },
+        "end_to_end_p99_s": {
+          "mean": 40.44284451618296,
+          "std": 4.9776530524402585,
+          "n": 3
+        },
+        "slo_overall_rate": {
+          "mean": 0.47222222222222215,
+          "std": 0.09820927516479826,
+          "n": 3
+        },
+        "slo_interactive_rate": {
+          "mean": 0.25939849624060146,
+          "std": 0.11796766451892035,
+          "n": 3
+        },
+        "token_throughput_per_s": {
+          "mean": 142.94604143755646,
+          "std": 21.61536066997904,
+          "n": 3
+        },
+        "clip_applied_rate": {
+          "mean": 0.1111111111111111,
+          "std": 0.05196746370519363,
+          "n": 3
+        },
+        "realized_truncation_rate": {
+          "mean": 0.1111111111111111,
+          "std": 0.05196746370519363,
+          "n": 3
+        },
+        "mean_cap_reduction_tokens": {
+          "mean": 416.0833333333333,
+          "std": 107.48494726653071,
+          "n": 3
+        }
+      },
+      "mg1": {
+        "mean_service_s": 14.684691453378425,
+        "second_moment_service_s2": 302.87236114882376,
+        "utilization": 2.4963975470743325,
+        "stable": false,
+        "mean_queue_wait_s": null
+      }
+    },
+    "clip1024": {
+      "seed_count": 3,
+      "aggregates": {
+        "queue_wait_mean_s": {
+          "mean": 0.6660756717218209,
+          "std": 0.5052375557170605,
+          "n": 3
+        },
+        "queue_wait_p99_s": {
+          "mean": 5.703251390322596,
+          "std": 3.9148827100415895,
+          "n": 3
+        },
+        "end_to_end_p99_s": {
+          "mean": 32.659457706329704,
+          "std": 2.0953877311636013,
+          "n": 3
+        },
+        "slo_overall_rate": {
+          "mean": 0.5555555555555555,
+          "std": 0.019641855032959687,
+          "n": 3
+        },
+        "slo_interactive_rate": {
+          "mean": 0.30701754385964913,
+          "std": 0.08574579145140852,
+          "n": 3
+        },
+        "token_throughput_per_s": {
+          "mean": 123.09304955277445,
+          "std": 23.342775155587336,
+          "n": 3
+        },
+        "clip_applied_rate": {
+          "mean": 0.34722222222222215,
+          "std": 0.08561686115234689,
+          "n": 3
+        },
+        "realized_truncation_rate": {
+          "mean": 0.34722222222222215,
+          "std": 0.08561686115234689,
+          "n": 3
+        },
+        "mean_cap_reduction_tokens": {
+          "mean": 710.2083333333334,
+          "std": 45.99777319489378,
+          "n": 3
+        }
+      },
+      "mg1": {
+        "mean_service_s": 11.812442708564253,
+        "second_moment_service_s2": 184.10134898363108,
+        "utilization": 2.008115260455923,
+        "stable": false,
+        "mean_queue_wait_s": null
+      }
+    }
+  }
+}

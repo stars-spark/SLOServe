@@ -60,6 +60,7 @@ SWEEP_RESULT_COLUMNS = (
     "advertised_cap_tokens",
     "clamp_min",
     "clamp_max",
+    "force_exact_output_tokens",
     "aging_levels",
     "adaptive_ceiling",
     "ceiling_margin",
@@ -284,6 +285,9 @@ def _metric_row(label: str, config: ExperimentConfig, metrics: MetricsSummary) -
         ),
         "clamp_min": realistic.clamp_min if realistic is not None else None,
         "clamp_max": realistic.clamp_max if realistic is not None else None,
+        "force_exact_output_tokens": (
+            realistic.force_exact_output_tokens if realistic is not None else False
+        ),
         "aging_levels": config.slo_aware.aging_levels,
         "adaptive_ceiling": config.slo_aware.adaptive_ceiling,
         "ceiling_margin": config.slo_aware.ceiling_margin,

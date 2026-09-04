@@ -244,15 +244,100 @@ The sweep's more useful result is a negative-space finding about the fixed knob 
 
 ### K. Output-length estimate: true vs advertised vs learned (multi-seed)
 
-Weeks 3–5 hold output length fixed as a known per-request cap. In real serving the actual output length is unknown at admission and heavy-tailed, so the SLO-aware service-time estimate must rely on a prediction. To study this we replace the workload with a realistic model: each request's true output length is drawn from a per-kind log-normal mixture (pooled shape referencing log-normal with mu=7, sigma=0.7, following Yang et al.'s queueing analysis), the model generates to that length, and the scheduler sees only a coarse prompt kind and a loose 2048-token advertised cap. A bucket-median length predictor trained offline (held-out MAE 381 tokens versus 1043 for the advertised-cap constant) supplies the learned estimate. We then compare three length sources feeding the service-time term — `true` (oracle, unrealistic), `advertised` (naive constant cap), and `learned` — at a saturating point (Poisson rps=1.2) over six seeds.
+Weeks 3–5 treated each request's configured output cap as its service-length signal. ExpK-A tried
+to relax that assumption by sampling a per-kind log-normal target and comparing `true`,
+`advertised`, and `learned` estimates. The implementation correctly separated what each scheduler
+could see after a request-reclocking bug was fixed, but it still sent the sampled target only as
+vLLM's `max_tokens`.
 
-Accurate length has real value, but a coarse predictor squanders it. Interactive SLO attainment is 0.74 ± 0.17 (oracle), 0.65 ± 0.18 (naive), and 0.51 ± 0.17 (learned), and the same ordering holds on median latency (end-to-end P50 3.82 s oracle, 4.55 s naive, 5.56 s learned; median queue wait 1.00, 1.53, 2.31 s). The oracle is best in five of six seeds and the learned predictor is worst in five of six, so despite overlapping bands the direction — oracle > naive > learned — is consistent. Two facts stand together: knowing the true output length genuinely improves SLO-aware scheduling (oracle beats naive), and our learned predictor not only fails to capture that gain but falls below the naive constant.
+A later request-fact audit invalidated the intended oracle interpretation. On the six no-clip seeds,
+the sampled target and realized completion length had Pearson correlation about 0.33; only 202 of
+1080 formal requests reached the target, while most finished naturally with `finish_reason=stop`.
+The previously reported interactive-SLO ordering (0.74 ± 0.17 target-cap source, 0.65 ± 0.18
+advertised constant, 0.51 ± 0.17 learned predictor) is therefore a comparison of scheduling proxies
+for a requested ceiling, not evidence that knowing the actual future output improves scheduling.
+Those raw files and the old figure remain available for audit, but the oracle/true-length conclusion
+is withdrawn.
 
-(Methodological note: an earlier run of this experiment was invalid. The benchmark's per-repetition envelope reconstruction dropped the two decoupling fields — `advertised_cap_tokens` and `prompt_kind` — so the advertised source silently fell back to the true target and the learned source degraded to a single global constant. A regression test now pins field preservation; the numbers above are from the corrected run.)
+The corrected workload has an explicit, default-off `force_exact_output_tokens` flag. When enabled,
+the HTTP backend sends `min_tokens == max_tokens == effective cap`; a real vLLM probe produced 423
+tokens and `stop` with an ordinary 512-token cap, versus exactly 512 tokens and `length` with the
+corrected mode. ExpK-B uses this mode so its sampled target and any admission clip are realized.
+ExpK-A must be rerun under the same semantics before drawing a true-vs-predicted scheduling
+conclusion.
 
-The mechanism is the interesting part. The cost term is shortest-job-first: a smaller estimated service time lowers the score and promotes the request. With the oracle, genuinely short requests — most interactive ones — are correctly rushed ahead, so interactive SLO and median latency both improve. The naive constant gives every request the same maximal estimate, which disables the SJF term entirely; the score falls back to slack and waiting, leaving interactive requests protected only by their deadline. The learned bucket-median predictor is more accurate on average (held-out MAE 381 versus 1043 tokens) yet does worst of all, because prediction accuracy is the wrong objective for scheduling: its errors are *structured*. Every request in a `(class, kind)` bucket receives the same median, and because prompt kind is drawn independently of request class with heavy within-kind variance, a short interactive request tagged `long` is assigned a large service time and pushed back by the SJF term. Naive's error is enormous but *uniform* — it merely switches SJF off — whereas the learned predictor's smaller but structured error actively mis-orders requests, which is worse than no length signal at all. The lesson is that length awareness helps only with a predictor good enough to preserve ordering, not merely to minimize MAE; a coarse per-bucket predictor is worse than ignoring length. This motivates the next study (section L, in progress): applying length knowledge to tame the heavy tail via max-token clipping — the queueing-delay mechanism of Yang et al. — rather than to reorder by an imperfect prediction.
+### L. Length-aware output clipping and an M/G/1 trend baseline (multi-seed)
 
-![Length-estimate comparison](../results/figures/length-source.png)
+ExpK-A asked whether knowing a request's length helps *order* the queue, and returned nothing
+usable. ExpK-B asks a different question suggested by the queueing literature: the mean wait in
+M/G/1 is `E[W] = λE[S²]/(2(1−ρ))`, so it is driven by the *second* moment of service time. Under a
+heavy-tailed output distribution the tail inflates `E[S²]` far more than it inflates the mean, which
+predicts that capping the longest generations should cut waiting out of proportion to the capacity
+it returns. Rather than reordering the queue, admission here truncates it: the learned predictor
+decides which requests look long, and those are dispatched with a reduced backend `max_tokens`.
+
+All twelve runs use FCFS (so nothing is attributable to policy), `max_in_flight=4`, Poisson arrivals
+at 0.17 req/s, the realistic per-kind log-normal length model with `force_exact_output_tokens`
+enabled, and three seeds per arm. Fitting `S = a·n + c` on the no-clip arm gives
+`a = 0.01494 s/token`, `c = 0.0156 s`, `R² = 0.9998` over 216 successful dispatches — service time
+on this engine is almost perfectly linear in output length, which is what licenses turning a length
+distribution into a service-time distribution at all.
+
+| backend cap | queue wait mean (s) | queue wait p99 (s) | e2e p99 (s) | interactive SLO | tokens/s | clipped | mean tokens cut |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| none | 2.78 ± 2.64 | 15.69 ± 6.53 | 45.06 ± 4.80 | 0.26 ± 0.12 | 146.6 ± 22.8 | 0% | – |
+| 1536 | 2.39 ± 2.15 | 12.79 ± 3.78 | 40.44 ± 4.98 | 0.26 ± 0.12 | 142.9 ± 21.6 | 11.1% | 416 |
+| 1024 | 0.67 ± 0.51 | 5.70 ± 3.91 | 32.66 ± 2.10 | 0.31 ± 0.09 | 123.1 ± 23.3 | 34.7% | 710 |
+| 512 | 0.26 ± 0.19 | 3.85 ± 2.89 | 31.87 ± 1.96 | 0.73 ± 0.06 | 93.3 ± 20.9 | 43.1% | 1019 |
+
+This is the first intervention in the project that clearly works, and the mechanism is the predicted
+one. Clipping to 512 tokens cuts mean queue wait by 10.6x and p99 queue wait by 4.1x, and lifts
+interactive SLO attainment from 0.26 to 0.73 — a larger interactive gain than any scheduling policy
+in Weeks 3–5 produced. The gain tracks `E[S²]`, not mean service. Between the no-clip and 512-token arms the fitted
+mean service time falls 1.75x while `E[S²]` falls 2.94x and the measured wait falls 10.6x: capping
+the tail removes variance far faster than it removes work, and the queue responds to the variance.
+
+**The theory baseline required an explicit and unflattering correction.** A literal single-server
+M/G/1 is vacuous on this system: with `max_in_flight=4` the unscaled utilization is 2.63 even on the
+best arm, so the model declares every configuration unstable and predicts nothing, while the
+measured queue is plainly in steady state. The analysis therefore divides fitted service times by
+the measured concurrency, modelling the engine as one server four times faster. That bridge is *not*
+M/G/c — Pollaczek–Khinchine has no exact M/G/c form — and it is optimistic, because it lets a single
+long request borrow the whole aggregate service rate. Read against the measurement it behaves
+exactly as that flaw predicts:
+
+| backend cap | ρ (c-scaled) | predicted E[W] (s) | predicted, normalized | measured, normalized |
+| --- | --- | --- | --- | --- |
+| none | 0.657 | 5.31 | 1.00 | 1.00 |
+| 1536 | 0.624 | 4.28 | 0.81 | 0.86 |
+| 1024 | 0.502 | 1.96 | 0.37 | 0.24 |
+| 512 | 0.376 | 1.00 | 0.19 | 0.09 |
+
+The direction and the ordering are right at every step, and the predicted curve sits between the
+mechanism (`E[S²]`) and the measurement. The absolute seconds are not: the model over-predicts wait
+roughly two-fold throughout and under-predicts how much clipping helps. It is reported as a
+qualitative trend check on the heavy-tail mechanism, and nothing in this section rests on its
+absolute values.
+
+**The cost is real and is the reason this is not a free win.** At the 512-token cap, 43.1% of
+requests are cut short by an average of 1019 tokens each, and token throughput falls 36% (146.6 →
+93.3 tok/s). Latency improves partly *because the system does less work*. Clipping is therefore a
+utility-for-latency exchange, not a scheduling improvement, and it is only defensible where
+truncated output is acceptable to the application. The honest statement of the result is that
+admission-side length control moved the interactive SLO further than queue ordering ever did, at a
+price that queue ordering never charged.
+
+**Boundaries.** Three seeds per arm, 24 requests per repetition, one model on one GPU. The
+concurrency scaling is an approximation, as above. Absolute latencies are not comparable with
+expK-A: after a thermal incident this machine runs with turbo disabled and the ACPI profile set to
+`balanced`, which raised the fitted service coefficient from 0.00947 to 0.01475 s/token and cut
+measured capacity from 0.39 to 0.230 req/s. All four arms in this section share those conditions, so
+within-section comparisons hold; cross-section ones do not. Finally, the clip decision uses the
+learned predictor, whose ordering errors were documented in section K — but because clipping only
+needs a coarse long-versus-short call rather than a correct ranking, those errors cost much less
+here than they did there.
+
+![Clipping trade-off](../results/figures/clipping-tradeoff.png)
 
 ## 5. Discussion
 

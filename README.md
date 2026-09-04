@@ -67,16 +67,28 @@ tiers, is the knob that governs SLO differentiation:
 ![Aging threshold trade-off](results/figures/aging-tradeoff.png)
 ![Adaptive ceiling versus fixed thresholds](results/figures/adaptive-ceiling.png)
 
-**Output-length estimation (Week 6, in progress).** Under a realistic heavy-tailed output-length
-workload, the SLO-aware service-time estimate can use the true length (`oracle`), a loose constant
-cap (`naive`), or a learned predictor. Accurate length **does** help scheduling — oracle interactive
-SLO 0.74 ± 0.17 beats naive 0.65 ± 0.18 — but a coarse bucket-median predictor does **worst** of all
-(0.51 ± 0.17), below even the naive constant. The lesson: prediction accuracy (MAE) is the wrong
-objective for scheduling — the predictor's *structured* errors mis-order requests, which is worse
-than the naive constant's uniform ignorance. Length awareness helps only with a predictor good
-enough to preserve ordering.
+**Output-length estimation (Week 6, under correction).** The first expK-A implementation sampled a
+heavy-tailed target and sent it as vLLM's `max_tokens`. A real-output audit later showed that this is
+only a ceiling: the model often stops early, and sampled targets correlate only weakly with realized
+output (`r≈0.33` in the six no-clip seeds). The earlier 0.74/0.65/0.51 comparison therefore measures
+target-cap proxy scheduling, not true/oracle output-length scheduling, and is retained as diagnostic
+data rather than a performance conclusion. A default-off exact-length mode now sends matching
+`min_tokens` and `max_tokens`, and expK-B below runs entirely under that explicit semantic
+boundary.
 
-![Length-estimate comparison](results/figures/length-source.png)
+**Length-aware output clipping works, and it is the first intervention here that does (Week 6).**
+Instead of reordering the queue, admission truncates it: the learned predictor flags long-looking
+requests and dispatches them with a reduced backend `max_tokens`. Under a heavy-tailed workload this
+follows the M/G/1 mean-wait law `E[W] = λE[S²]/(2(1−ρ))`, which is driven by the *second* moment of
+service time. Capping at 512 tokens cuts mean queue wait **10.6x** (2.78 → 0.26 s) and lifts
+interactive SLO attainment from **0.26 to 0.73** — a bigger interactive gain than any scheduling
+policy in Weeks 3–5 produced. The mechanism is the predicted one: mean service time falls 1.75x
+while `E[S²]` falls 2.94x. It is **not free** — 43% of requests are cut short by ~1019 tokens each
+and token throughput drops 36%, so this is a utility-for-latency exchange rather than a scheduling
+win. A concurrency-scaled M/G/1 baseline reproduces the ordering and direction at every cap but
+over-predicts absolute wait about two-fold, and is reported only as a qualitative trend check.
+
+![Clipping trade-off](results/figures/clipping-tradeoff.png)
 
 Negative and surprising results are kept and explained rather than trimmed; retained raw runs back
 every claim above.
@@ -107,13 +119,15 @@ uv run sloserve sweep --config configs/sweeps/expG-robust.yaml
 
 Sweep configs live in [`configs/sweeps/`](configs/sweeps) (e.g. `expG-robust` for the saturation
 robustness study, `expI-multiseed` for multi-level aging, `expJ-adaptive` for the ceiling study,
-`expK-A-length-source` for length estimation). Experiment D changes server-side parameters, so each
+`expK-A-length-source` for length estimation, `expK-B-clipping` for output clipping).
+Experiment D changes server-side parameters, so each
 `serve-D-*.yaml` / `expD-*.yaml` pair needs a separate vLLM restart. Regenerate figures from the
 saved aggregate CSVs:
 
 ```bash
 uv run sloserve plot --results results/raw/<experiment>/sweep-results.csv --out results/figures
 uv run python scripts/plot_week3_extra.py
+uv run python scripts/analyze_expkb.py
 ```
 
 ## Repository layout

@@ -102,6 +102,7 @@ def test_uniform_cap_preserves_legacy_rng_draw_order() -> None:
     ]
     assert all(request.advertised_cap_tokens is None for request in requests)
     assert all(request.prompt_kind is None for request in requests)
+    assert not any(request.force_exact_output_tokens for request in requests)
 
 
 def test_realistic_lengths_are_heavy_tailed_and_prompt_kind_is_partially_predictive() -> None:
@@ -129,6 +130,7 @@ def test_realistic_lengths_are_heavy_tailed_and_prompt_kind_is_partially_predict
     assert max(lengths) > 2 * statistics.median(lengths)
     assert all(request.prompt_kind is not None for request in requests)
     assert all(request.advertised_cap_tokens == 2048 for request in requests)
+    assert not any(request.force_exact_output_tokens for request in requests)
     assert all(len(set(kind_lengths)) > 1 for kind_lengths in by_kind.values())
     expected_fractions = dict(
         zip(
@@ -139,3 +141,17 @@ def test_realistic_lengths_are_heavy_tailed_and_prompt_kind_is_partially_predict
     )
     for kind, expected in expected_fractions.items():
         assert kind_counts[kind] / len(requests) == pytest.approx(expected, abs=0.03)
+
+
+def test_realistic_workload_can_force_sampled_output_targets() -> None:
+    base = load_config(PROJECT_ROOT / "configs" / "base.yaml").workload
+    realistic = RealisticLengthConfig(force_exact_output_tokens=True)
+    workload = WorkloadConfig.model_validate(
+        {
+            **base.model_dump(),
+            "length_model": LengthModel.REALISTIC,
+            "realistic_length": realistic.model_dump(),
+        }
+    )
+
+    assert all(request.force_exact_output_tokens for request in generate_requests(workload))

@@ -48,6 +48,7 @@ def generate_requests(
             )
             max_output_tokens = max(realistic.clamp_min, min(realistic.clamp_max, target))
             advertised_cap_tokens = realistic.advertised_cap_tokens
+            force_exact_output_tokens = realistic.force_exact_output_tokens
         else:
             max_output_tokens = rng.randint(
                 profile.output_tokens.minimum,
@@ -55,6 +56,7 @@ def generate_requests(
             )
             advertised_cap_tokens = None
             prompt_kind = None
+            force_exact_output_tokens = False
         requests.append(
             RequestEnvelope(
                 request_id=f"request-{sequence_id:06d}",
@@ -66,6 +68,7 @@ def generate_requests(
                 deadline_time_s=arrival_time_s + profile.end_to_end_slo_ms / 1000.0,
                 advertised_cap_tokens=advertised_cap_tokens,
                 prompt_kind=prompt_kind,
+                force_exact_output_tokens=force_exact_output_tokens,
             )
         )
     return tuple(requests)

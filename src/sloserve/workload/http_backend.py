@@ -60,6 +60,11 @@ class HttpStreamingBackend(AsyncRequestBackend):
             "temperature": 0,
             "stream_options": {"include_usage": True},
         }
+        if request.force_exact_output_tokens:
+            # vLLM's max_tokens is otherwise only a ceiling: the model may emit EOS early.
+            # Matching min_tokens makes the synthetic target (or clipped cap) observable as
+            # the realized output length, which is required by length-control experiments.
+            body["min_tokens"] = request.effective_max_output_tokens
 
         try:
             async with self._client.stream(

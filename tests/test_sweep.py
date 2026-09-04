@@ -184,7 +184,7 @@ def test_versioned_sweep_configs_load_expected_matrices() -> None:
         "expH-poisson.yaml": 3,
         "expI-multilevel.yaml": 4,
         "expK-A-length-source.yaml": 18,
-        "expK-B-clipping.yaml": 24,
+        "expK-B-clipping.yaml": 12,
     }
 
     definitions = {
@@ -229,9 +229,10 @@ def test_versioned_sweep_configs_load_expected_matrices() -> None:
     clipping = definitions["expK-B-clipping.yaml"]
     assert clipping.base_config.router.policy is SchedulerPolicyName.FCFS
     assert clipping.base_config.admission.clip_source is ClipSource.LEARNED
-    assert [point.clip_enabled for point in clipping.points[:6]] == [False] * 6
-    assert [point.clip_max_tokens for point in clipping.points[6:]] == (
-        [1536] * 6 + [1024] * 6 + [512] * 6
+    assert [point.clip_enabled for point in clipping.points[:3]] == [False] * 3
+    assert [point.clip_enabled for point in clipping.points[3:]] == [True] * 9
+    assert [point.clip_max_tokens for point in clipping.points[3:]] == (
+        [1536] * 3 + [1024] * 3 + [512] * 3
     )
 
 

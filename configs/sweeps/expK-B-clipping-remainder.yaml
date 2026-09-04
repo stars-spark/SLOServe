@@ -1,0 +1,39 @@
+# Resume-only fragment for the three expK-B clip512 points that did not complete.
+# The operating point and thermal constraints are documented in expK-B-clipping.yaml.
+#
+# NOT the formal result. This config was used once, for a single bounded verification point,
+# to check that a full sweep point fits inside the reduced thermal budget after turbo was
+# disabled. The twelve formal points all live in results/raw/week6-expK-B/; see the README in
+# results/raw/week6-expK-B-remainder/ before reusing anything from that directory.
+base_config: ../base.yaml
+base_overrides:
+  server:
+    gpu_memory_utilization: 0.5
+    max_num_seqs: 16
+  router:
+    policy: fcfs
+    max_in_flight: 4
+  admission:
+    clip_enabled: true
+    clip_max_tokens: 512
+    clip_source: learned
+    clip_estimator_path: results/artifacts/length-predictor.json
+  workload:
+    arrival_process: poisson
+    request_rate_rps: 0.17
+    total_requests: 24
+    interactive_fraction: 0.5
+    warmup_requests: 4
+    repetitions: 3
+    length_model: realistic
+    realistic_length:
+      advertised_cap_tokens: 2048
+      clamp_max: 2048
+      force_exact_output_tokens: true
+  metrics:
+    output_directory: results/raw/week6-expK-B-remainder
+
+points:
+  - {label: clip512-s1, random_seed: 20250825}
+  - {label: clip512-s2, random_seed: 11}
+  - {label: clip512-s3, random_seed: 202}

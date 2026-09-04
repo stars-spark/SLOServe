@@ -1,6 +1,30 @@
-# Experiment K-B: isolate learned length-aware max-token clipping under the same realistic
-# heavy-tailed workload as expK-A. FCFS keeps scheduling fixed so differences come from clipping,
-# not from the learned estimator's known ordering errors. Each arm replays the same six seeds.
+# Experiment K-B: isolate learned length-aware max-token clipping under the realistic
+# heavy-tailed workload. FCFS keeps scheduling fixed so differences come from clipping, not from
+# the learned estimator's known ordering errors (see section K). Each arm replays the same seeds.
+#
+# OPERATING-POINT CALIBRATION (important). An earlier version of this sweep ran at rps=1.2, a
+# point calibrated before `force_exact_output_tokens` existed. Once the workload realizes its
+# sampled heavy-tailed target exactly, mean output grows to ~1037 tokens and measured engine
+# capacity is ~0.39 requests/s, so rps=1.2 was ~3x overloaded: queue wait grew monotonically
+# (1.8 s -> 96 s within one repetition) instead of reaching steady state, and the M/G/1 baseline
+# was undefined because utilization was ~11.8. Xu et al.'s queueing mechanism (a heavy tail
+# inflating E[S^2] and therefore mean wait) is only observable when utilization < 1, so the rate
+# here is set to 0.17 requests/s, giving utilization ~0.74 against the measured 0.230 req/s
+# capacity of the machine's thermally-constrained power profile (see below). The overloaded partial run is retained under
+# results/raw/week6-expK-B-overloaded-partial-rps1.2/ rather than deleted.
+#
+# The design is trimmed (4 clip levels x 3 seeds = 12 points, 28 measured requests) to keep the
+# stable-regime sweep tractable: staying below capacity necessarily makes wall-clock longer.
+# Thermal budget and POWER PROFILE (affects absolute numbers). A continuous sweep drove this
+# laptop's i9-13900H to 97 C within seconds under its default `performance` profile, so the
+# machine now runs with turbo disabled and the ACPI platform profile set to `balanced`
+# (max clock 5.2 -> 2.6 GHz). That holds the CPU at ~76 C and the GPU at ~64 C, but it also
+# slows the engine: the fitted service coefficient rises from 0.00947 to 0.01475 s/token and
+# measured capacity falls from 0.39 to 0.230 req/s (evidence: results/raw/week6-capacity-probe).
+# Consequently expK-B's ABSOLUTE latencies are not comparable with expK-A, which ran at full
+# clock; only within-expK-B arm comparisons are valid, and every arm shares these conditions.
+# Points are executed one at a time behind a cooldown gate, with a hard stop above 71 C GPU
+# or 88 C CPU.
 base_config: ../base.yaml
 base_overrides:
   server:
@@ -16,15 +40,17 @@ base_overrides:
     clip_estimator_path: results/artifacts/length-predictor.json
   workload:
     arrival_process: poisson
-    request_rate_rps: 1.2
-    total_requests: 60
+    request_rate_rps: 0.17
+    total_requests: 24
     interactive_fraction: 0.5
-    warmup_requests: 5
+    warmup_requests: 4
     repetitions: 3
     length_model: realistic
     realistic_length:
       advertised_cap_tokens: 2048
       clamp_max: 2048
+      # Force vLLM to realize the sampled target exactly; max_tokens alone is only a cap.
+      force_exact_output_tokens: true
   metrics:
     output_directory: results/raw/week6-expK-B
 
@@ -32,24 +58,12 @@ points:
   - {label: no-clip-s1, clip_enabled: false, random_seed: 20250825}
   - {label: no-clip-s2, clip_enabled: false, random_seed: 11}
   - {label: no-clip-s3, clip_enabled: false, random_seed: 202}
-  - {label: no-clip-s4, clip_enabled: false, random_seed: 3407}
-  - {label: no-clip-s5, clip_enabled: false, random_seed: 42}
-  - {label: no-clip-s6, clip_enabled: false, random_seed: 65537}
   - {label: clip1536-s1, clip_enabled: true, clip_max_tokens: 1536, random_seed: 20250825}
   - {label: clip1536-s2, clip_enabled: true, clip_max_tokens: 1536, random_seed: 11}
   - {label: clip1536-s3, clip_enabled: true, clip_max_tokens: 1536, random_seed: 202}
-  - {label: clip1536-s4, clip_enabled: true, clip_max_tokens: 1536, random_seed: 3407}
-  - {label: clip1536-s5, clip_enabled: true, clip_max_tokens: 1536, random_seed: 42}
-  - {label: clip1536-s6, clip_enabled: true, clip_max_tokens: 1536, random_seed: 65537}
   - {label: clip1024-s1, clip_enabled: true, clip_max_tokens: 1024, random_seed: 20250825}
   - {label: clip1024-s2, clip_enabled: true, clip_max_tokens: 1024, random_seed: 11}
   - {label: clip1024-s3, clip_enabled: true, clip_max_tokens: 1024, random_seed: 202}
-  - {label: clip1024-s4, clip_enabled: true, clip_max_tokens: 1024, random_seed: 3407}
-  - {label: clip1024-s5, clip_enabled: true, clip_max_tokens: 1024, random_seed: 42}
-  - {label: clip1024-s6, clip_enabled: true, clip_max_tokens: 1024, random_seed: 65537}
   - {label: clip512-s1, clip_enabled: true, clip_max_tokens: 512, random_seed: 20250825}
   - {label: clip512-s2, clip_enabled: true, clip_max_tokens: 512, random_seed: 11}
   - {label: clip512-s3, clip_enabled: true, clip_max_tokens: 512, random_seed: 202}
-  - {label: clip512-s4, clip_enabled: true, clip_max_tokens: 512, random_seed: 3407}
-  - {label: clip512-s5, clip_enabled: true, clip_max_tokens: 512, random_seed: 42}
-  - {label: clip512-s6, clip_enabled: true, clip_max_tokens: 512, random_seed: 65537}

@@ -200,6 +200,7 @@ class RealisticLengthConfig(StrictModel):
     advertised_cap_tokens: int = Field(default=2048, ge=1)
     clamp_min: int = Field(default=8, ge=1)
     clamp_max: int = Field(default=2048, ge=1)
+    force_exact_output_tokens: bool = False
 
     @model_validator(mode="after")
     def validate_mixture(self) -> RealisticLengthConfig:
