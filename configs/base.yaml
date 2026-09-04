@@ -40,6 +40,7 @@ admission:
   adaptive_clip_tighten_thresholds: [1.0, 2.0, 3.0]
   adaptive_clip_relax_thresholds: [0.25, 0.75, 1.5]
   adaptive_clip_ewma_tau_s: 6.0
+  adaptive_clip_tighten_hold_s: 8.0
   adaptive_clip_relax_hold_s: 30.0
   adaptive_clip_capacity_rps: null
 

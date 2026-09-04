@@ -2,6 +2,23 @@
 
 ## 修订记录（2026-09-04）
 
+本次实现修订保留 §5.3 的低负载零截断硬门，但修正了使该硬门按构造不可达的控制律。原始
+`results/raw/week7-lowload-depth-probe/probe.json` 在 `rps=0.08` 下测得 `Q>=1` 占 1.7148%、
+`Q>=2` 占 0.6154%、非 L0 占 5.1155%，并实际施加 6 次 cap；即使把首个阈值抬到 2，低负载仍有
+`Q>=2` 瞬态，不能靠阈值消除 Poisson 假阳性。expK-B no-clip 保存的 252 条请求中，目标长度大于
+1536/1024/512 的比例分别为 27.38%/41.67%/71.43%，因此一次错误进入 L1 并非空动作。
+
+控制器现增加收紧侧连续证据：`P(t)` 在当前档位的下一收紧阈值之上连续保持
+`adaptive_clip_tighten_hold_s` 后才允许进入该档，跌回对应阈值下立即重置；多个档位各自计时，达成时
+仍可直接跳到自身证据已满足的最紧档。默认 `8.0s` 来自实际 episode 分离：同一低负载 CPU 探针的
+4.611161s、P95/max 为 6.151278s；expK-B `rps=0.17` no-clip 的每 repetition 主导 `Q>=1` episode
+P50 为 13.324348s、P95/max 为 43.151063s。8 秒高于低负载观测上界，同时比高负载典型主导 episode
+短 5.324348 秒。修改后相同低负载序列保存在
+`results/raw/week7-lowload-depth-probe/probe-after-tighten-hold.json`：6 次降为 0 次，非 L0 时间降为
+0，深度分布不变。两份都是基于 expK-B 服务时间拟合的确定性 CPU 模拟，不是真机测量。
+
+以下为此前同日修订记录：
+
 本次修订不改变方案的外部控制边界与预注册失败门，只吸收对
 `results/raw/week6-expK-B/` 已保存请求级 JSONL 的离线预检事实：在 `rps=0.17` 下，no-clip 的稳定
 等待深度峰值仅为 5/3/3，`Q>=8` 的时间占比为 0；clip512 又把 `Q>=2` 的时间占比从 10.6% 压到
@@ -10,7 +27,8 @@
 预算。正式矩阵由 30 点缩减为 21 点。本节引用的是 expK-B 既有原始数据的离线重建结果，不是 expL
 的新实验结果或本方案提出的目标值。
 
-本文只定义 Week 7 的实现与实验契约，不代表功能已经实现，也不包含新的实验结果。所有标为“本方案提出”的阈值、字段、实验点和验收门槛都是待实现、待真机证伪的设计值。
+本文定义 Week 7 的实现与实验契约。收紧侧迟滞、配置、CPU 回归和低负载探针现已实现并通过本地
+验证；本文仍不包含 expL 真机实验结果。尚未执行的正式实验点和 GPU 验收门槛仍待真机证伪。
 
 现状依据如下：`src/sloserve/router/clipping.py` 中的 `OutputClipper` 在 `clip_enabled: false` 时直接返回原 `RequestEnvelope`；固定截断只设置 `backend_max_output_tokens`，不覆盖原始 `max_output_tokens`。`src/sloserve/experiments/benchmark.py` 当前在创建 `AdmissionQueue` 之前对整批请求调用 clipper。expL 仍然只允许修改外部准入、排队和路由层，不修改 vLLM 内部调度器，也不尝试对已发往后端的生成做中途改 cap 或抢占。
 
@@ -99,11 +117,12 @@
 - 有空闲 slot 时，新请求被同步接纳，稳定深度仍为零。这表示系统尚未形成外部积压，“不收紧”是正确反应，不是信号被稀释。
 - slot 已满时，每个不能立即接纳的新请求使 `Q(t)` 增加一。若突发增加 `z` 个到达、同期释放 `d` 个 slot，则稳定深度变化为 `Q_new = max(0, Q_old + z - d)`；在 slot 饱和区间内，它对 `z` 单调不减，没有 median 的分母稀释问题。
 - 突发停止后，瞬时深度会随 dispatch 下降；`Q_bar(t)` 仍保存一段时间的拥塞记忆，使 cap 不会因一次 slot 释放立刻放松。
-- 单个很短的尖峰可能提高瞬时 `Q(t)`，但对时间 EWMA 的贡献与其持续时间成比例。控制律再用滞回和慢放松处理阈值抖动，而不是把统计定义改成容易受事件数污染的请求样本。
+- 单个很短的尖峰可能提高瞬时 `Q(t)`，但对时间 EWMA 的贡献与其持续时间成比例。控制律再用收紧侧
+  连续证据、阈值滞回和慢放松处理瞬态与抖动，而不是把统计定义改成容易受事件数污染的请求样本。
 
 仅使用 `Q_bar(t)` 会有平滑迟滞。为避免严重突发在一个 `tau` 内继续堆积，本方案提出使用同一信号族的“双时间尺度压力”：
 
-- `Q_inst`：当前稳定等待深度，用于越过较高门槛时立即收紧；
+- `Q_inst`：当前稳定等待深度，用于及时开始收紧侧连续证据计时；
 - `Q_bar`：按墙钟时间加权的深度，用于识别持续拥塞并延迟放松；
 - 控制压力 `P(t) = max(Q_inst, Q_bar)`，但只有稳定状态进入 `Q_inst`，不记录 append 后立即 dispatch 的瞬态深度。
 
@@ -177,10 +196,11 @@ Week 5 的根因不是“median 这个单词不好”，而是信号的统计方
 无效。
 
 本方案重新提出默认 queue-depth 参数：收紧阈值 `[1.0,2.0,3.0]`，放松阈值
-`[0.25,0.75,1.5]`，墙钟 EWMA 时间常数 `6.0s`，连续低压保持时间 `30.0s`。三个收紧阈值全部落在
+`[0.25,0.75,1.5]`，墙钟 EWMA 时间常数 `6.0s`，连续高压收紧保持时间 `8.0s`，连续低压放松保持
+时间 `30.0s`。三个收紧阈值全部落在
 既有 0–5 动态范围内。下表直接由 §1.2 的边际分布求和；它表示 `Q_inst` 达到对应门槛的**触发资格
 时间占比**，不是对尚未运行的 adaptive arm 档位驻留比例的预测。由于 `P=max(Q_inst,Q_bar)`，EWMA
-与 hold 只会延长压力/档位记忆，实际驻留必须由 decision sidecar 测量。
+与两侧 hold 会改变切换资格和档位记忆，实际驻留必须由 decision sidecar 测量。
 
 | 默认目标档位 | 收紧门槛 | no-clip 中 `Q_inst` 达标 | clip512 中 `Q_inst` 达标 | 可达性结论 |
 | --- | ---: | ---: | ---: | --- |
@@ -201,14 +221,29 @@ Week 5 的根因不是“median 这个单词不好”，而是信号的统计方
 高负载一个平均到达间隔，此时同样间隔后仍保留 `exp(-5.88/6)=37.5%` 的旧压力。EWMA 仍不负责压过
 `Q_inst` 的上升沿，只负责让下降沿有可观测记忆；保守臂用 `12.0s` 检验更长记忆的效用代价。
 
-- 当 `P(t)` 越过一个或多个收紧阈值时，立即跳到对应最紧档；严重 burst 不必逐档等待。
+- 每个更紧档在 `P(t)` 达到自己的收紧阈值时独立开始计时；连续保持 `8.0s` 才具备进入该档的资格，
+  期间跌回该阈值以下便清零该档证据。一次更新直接跳到自身证据已达成的最紧档，严重且持续的 burst
+  不必逐档等待；刚刚才越过的更高阈值不能借用低档已经累计的时间。
 - 放松采用更低阈值，且 `P(t)` 必须连续低于目标放松阈值达到 `30.0s`；每次最多放松一档，随后重新计时。从 L3 完全回到 L0 至少经历三次独立 hold，而不是一次计时连续跨三级。
-- 收紧快、放松慢是有意的不对称：外部队列增长会放大后续等待，需要及时减少尚未 dispatch 的工作量；过早放松会重新注入长尾，而慢放松只会在拥塞结束后短时多付出效用代价。低负载效用门槛会直接检验这个代价是否可接受。
+- 收紧仍快于放松，但不再是纯瞬时：8 秒过滤低负载 Poisson 瞬态，30 秒放松 hold 防止控制动作
+  自我熄火。代价是高负载首次收紧至少晚 8 秒，并在离散事件驱动下最晚到下一个更新才被观察，即
+  延迟上界为 `tighten_hold + one update interval`。expL 用“首次正深度到首次收紧”、queue P95/P99、
+  interactive SLO 和相对 fixed-512 的等待/SLO 收益保留率共同检验这项反应速度损失。
 - 决策只在队列状态事件下执行，所有状态更新都在同一条件锁内；同一请求只在 dispatch 前决定一次，发送后不再变更。
 
-控制器必须记录 `decision_time_s`、`Q_inst`、`Q_bar`、旧档位、新档位、选定 cap 和触发原因。分析应计算每次收紧延迟、档位驻留时间和相邻反向切换次数。若出现刚收紧便放松的频繁反转，视为控制 thrashing，而不是用聚合均值掩盖。
+控制器必须记录 `decision_time_s`、`Q_inst`、`Q_bar`、旧档位、新档位、选定 cap 和触发原因。收紧侧
+原因枚举为 `TIGHTEN_HOLD_STARTED/PENDING/RESET/ELAPSED`，与放松侧
+`RELAX_HOLD_STARTED/PENDING/RESET/ELAPSED` 对称。分析应计算每次收紧延迟、档位驻留时间和相邻反向
+切换次数。若出现刚收紧便放松的频繁反转，视为控制 thrashing，而不是用聚合均值掩盖。
 
-### 2.3 自我熄火风险与 relax hold 的预注册依据
+### 2.3 瞬态误收紧、自我熄火与两侧 hold 的依据
+
+原低负载探针已把瞬态误收紧从假设变成事实：`Q>=1` episode 的 P50 为 4.611161 秒，P95/max 为
+6.151278 秒；旧瞬时控制下非 L0 episode 的 P50 为 0.794899 秒，但 P95/max 达 42.797650 秒，长尾
+来自 30 秒放松记忆，而不是持续高压。默认收紧 hold 取 8 秒，覆盖所有已观测低负载正深度 episode。
+高负载侧直接重建 expK-B 三 seed × 三 repetition 的正式 no-clip 等待区间：每个 repetition 最长的
+主导 `Q>=1` episode 为 10.422251–43.151063 秒，nearest-rank P50 为 13.324348 秒。因此 8 秒仍让
+典型高负载积压撑过；反应代价相对瞬时控制固定增加至少 8 秒、至多再加一个更新间隔。
 
 expK-B 给出的反事实量级很强：no-clip 的 `Q>=2` 占 10.6%，而固定 clip512 下只占 0.8%；`Q=0`
 又从 84.9% 升到 97.3%。这说明强收紧一旦减少后端工作量，驱动信号本身会迅速塌向零。若仍用
@@ -216,19 +251,11 @@ expK-B 给出的反事实量级很强：no-clip 的 `Q>=2` 占 10.6%，而固定
 放松并重新注入长尾，形成收紧→放松→再收紧的自我熄火/极限环。慢放松不是实现细节，而是方案能否
 成立的关键控制条件。
 
-给定的边际分布不能唯一恢复 episode 数量和精确持续时间，因此这里不编造一个伪精确的“实测 episode
-秒数”。预注册时只能给出有依据的时间尺度估计：`rps=0.17` 的平均到达间隔是 5.88 秒；三个 seed 的
-no-clip 峰值为 5/3/3，且 `Q>=4` 仅占 5.0%，说明典型事件以峰值约 3 为主，需要经历不止一个队列状态
-区间来积累和排空。按 2–3 个平均到达间隔估计，典型拥塞 episode 的量级约为 12–18 秒；稀有峰值 5
-可按至多约 5 个间隔，即约 29 秒，作为保守上沿。这个 12–18/约29 秒是由到达率与峰值推导的设计
-尺度，不是新的测量结果；Batch 3 必须按 §1.2 的连续区间算法输出真正的 episode P50/P95/max。
-
-默认 `adaptive_clip_relax_hold_s=30s` 约为典型中心尺度 15 秒的 2 倍，并覆盖上述稀有上沿约一次；
-保守臂用 `45s`，约为典型中心尺度的 3 倍。选择“至少约 2 倍典型 episode”是为了让一次短暂归零不足以
-触发放松；若从 L3 开始，逐档重新计时还使完全放松至少需要 90 秒。代价是拥塞真正结束后可能继续
-截断，因此低负载确定性零截断门和真机吞吐等价区间必须共同约束它。若 Batch 3 从既有/合成 trace
-复算出的 episode P95 超过 30 秒，不能事后悄悄改 hold；应在 GPU 前把它作为预注册配置失配并重新
-评审，或保留为明确失败风险。
+高负载全部 177 个 `Q>=1` episode 中包含可立即 dispatch 所形成的几十微秒记录间隔；保留这些原始
+间隔时 P95 为 10.422251 秒、max 为 43.151063 秒。默认 `adaptive_clip_relax_hold_s=30s` 高于该实测
+P95，但不覆盖最大 episode；它仍是防止短暂归零自我熄火的保守记忆，而不是保证覆盖每个极端事件。
+若从 L3 开始，逐档重新计时使完全放松至少需要 90 秒。代价是拥塞真正结束后可能继续截断，因此低
+负载确定性零截断门和真机吞吐等价区间必须共同约束它。
 
 ### 2.4 控制时点与外部边界
 
@@ -240,7 +267,7 @@ no-clip 峰值为 5/3/3，且 `Q>=4` 仅占 5.0%，说明典型事件以峰值�
 
 ### 3.1 `configs/base.yaml` 的新增字段
 
-本方案提出继续把字段放在现有 `admission:` 下，并在未来实现批次中加入以下默认值：
+字段继续放在现有 `admission:` 下；当前实现的默认值如下：
 
 ```yaml
 admission:
@@ -254,6 +281,7 @@ admission:
   adaptive_clip_tighten_thresholds: [1.0, 2.0, 3.0]
   adaptive_clip_relax_thresholds: [0.25, 0.75, 1.5]
   adaptive_clip_ewma_tau_s: 6.0
+  adaptive_clip_tighten_hold_s: 8.0
   adaptive_clip_relax_hold_s: 30.0
   adaptive_clip_capacity_rps: null
 ```
@@ -268,6 +296,7 @@ admission:
 | `adaptive_clip_tighten_thresholds` | 3 个严格递增有限非负浮点数 | `[1.0, 2.0, 3.0]` | L0→L1→L2→L3 的收紧门槛；按 expK-B 既有 0–5 动态范围标定 |
 | `adaptive_clip_relax_thresholds` | 3 个有限非负浮点数，逐档小于对应收紧门槛 | `[0.25, 0.75, 1.5]` | 滞回放松门槛 |
 | `adaptive_clip_ewma_tau_s` | 有限正浮点数 | `6.0` | 墙钟 EWMA 时间常数；约一个高负载平均到达间隔 |
+| `adaptive_clip_tighten_hold_s` | 有限非负浮点数 | `8.0` | 收紧前连续高压保持时间；由低负载 P95/max 6.151278s 与高负载主导 episode P50 13.324348s 分离得到 |
 | `adaptive_clip_relax_hold_s` | 有限非负浮点数 | `30.0` | 放松前连续低压保持时间；约两倍典型 episode 中心尺度 |
 | `adaptive_clip_capacity_rps` | 正浮点数或 `null` | `null` | 仅 `rho_hat` 对照需要；推荐信号不得依赖它 |
 
@@ -280,7 +309,9 @@ admission:
 1. `adaptive_clip_enabled: false` 时不构造控制器，不增加 clock 调用，不改变 RNG 调用，不改变 queue mutation 次序。
 2. 关闭自适应且 `clip_enabled: false` 时，仍由当前 `OutputClipper.apply()` 直接返回同一对象。
 3. 关闭自适应且固定 `clip_enabled: true` 时，继续走现有“建队列前一次性 clip”的路径；不能借 Week 7 重构顺便改变固定 cap 的判断时点。
-4. 新字段在关闭状态下从 legacy config-hash 投影中排除，避免仅因新增默认字段改变历史 `config_hash`。
+4. 新字段（包括 `adaptive_clip_tighten_hold_s`）在关闭状态下从 legacy config-hash 投影中排除，避免
+   仅因新增默认字段改变历史 `config_hash`；基准哈希继续为
+   `520091cbcb2669534c962b25c86c8f6fd23e7cd1e3191f7afe36a672b53201a6`。
 5. 自适应决策字段写入独立的 `*-adaptive-cap-decisions.jsonl`；关闭状态不创建该 sidecar。现有 request JSONL/CSV 的字段顺序、缺省键和数值格式保持不变。
 
 parity 测试采用确定性 fake backend、fake clock、相同 seed 和完全相同 trace，在修改前保存 no-clip 与固定 cap=512 两份 golden JSONL。修改后分别运行关闭路径，对完整文件做 `cmp` 和 SHA-256 校验；同时逐对象断言 request identity、dispatch 顺序、有效 cap、状态和所有时间戳一致。任何一个字节或逐请求字段不同都算失败。真实 GPU 运行含不可控计时，不适合做逐字节 parity 证明，只用于补充请求语义抽查。
@@ -299,11 +330,11 @@ parity 测试采用确定性 fake backend、fake clock、相同 seed 和完全�
 
 为避免看到结果后再调参，本方案提出在生成正式 sweep 前冻结以下 override；这些数值是实验自变量，不是实验结果：
 
-| adaptive arm | signal | tighten | relax | EWMA `tau` | relax hold | capacity |
-| --- | --- | --- | --- | ---: | ---: | ---: |
-| `adaptive-q-default` | `queue_depth_ewma` | `[1.0, 2.0, 3.0]` | `[0.25, 0.75, 1.5]` | `6.0s` | `30.0s` | `null` |
-| `adaptive-q-conservative` | `queue_depth_ewma` | `[2.0, 3.0, 4.0]` | `[0.5, 1.5, 2.5]` | `12.0s` | `45.0s` | `null` |
-| `adaptive-rho-fixed-capacity` | `rho_hat` | `[0.70, 0.85, 1.00]` | `[0.60, 0.75, 0.90]` | `10.0s` | `10.0s` | `0.230` |
+| adaptive arm | signal | tighten | relax | EWMA `tau` | tighten hold | relax hold | capacity |
+| --- | --- | --- | --- | ---: | ---: | ---: | ---: |
+| `adaptive-q-default` | `queue_depth_ewma` | `[1.0, 2.0, 3.0]` | `[0.25, 0.75, 1.5]` | `6.0s` | `8.0s` | `30.0s` | `null` |
+| `adaptive-q-conservative` | `queue_depth_ewma` | `[2.0, 3.0, 4.0]` | `[0.5, 1.5, 2.5]` | `12.0s` | `8.0s` | `45.0s` | `null` |
+| `adaptive-rho-fixed-capacity` | `rho_hat` | `[0.70, 0.85, 1.00]` | `[0.60, 0.75, 0.90]` | `10.0s` | `8.0s` | `10.0s` | `0.230` |
 
 三个 adaptive arm 都使用 `[1536, 1024, 512]`。`rho_hat` arm 的 `tau` 用于按墙钟统计到达率；分母固定为配置中的容量，禁止在正式运行途中用受 cap 影响的完成率回写。
 
@@ -361,8 +392,8 @@ parity 测试采用确定性 fake backend、fake clock、相同 seed 和完全�
 - 每种有向切换（尤其“收紧→放松”和“放松→再收紧”）的次数、相邻切换间隔与完整
   `tighten -> relax -> retighten` 周期的 count、P50、P95、min；
 - 首次 `Q_inst>0` 到首次收紧的延迟，以及收紧后 `Q_inst/Q_bar` 归零到真正放松的延迟；
-- 以 `adaptive_clip_relax_hold_s` 为尺度归一化的周期长度，明确有多少反向周期短于 1×hold、位于
-  1–2×hold，或长于 2×hold。
+- 分别以 `adaptive_clip_tighten_hold_s`、`adaptive_clip_relax_hold_s` 为尺度归一化相应方向的切换
+  延迟与周期长度，明确有多少反向周期短于 1×hold、位于 1–2×hold，或长于 2×hold。
 
 验收不只看切换总数。若推荐臂的短周期反向切换反复出现，或大量周期接近 hold 边界，说明闭环正在
 自我熄火/形成极限环；即使平均等待或吞吐有利也不能通过。反之，长时间驻留某一档也不能自动算稳定，
@@ -371,6 +402,13 @@ parity 测试采用确定性 fake backend、fake clock、相同 seed 和完全�
 ### 5.3 “低负载没有效用代价”的 CPU/GPU 分工验证
 
 “低负载没有效用代价”拆成两个确定性命题和一个随机性命题，不再让 GPU 重复证明状态机语义：
+
+旧控制律已真实触发过本节硬门：`probe.json` 的 `clip_applied_count=6`，所以“瞬时越阈即收紧”不能
+进入 GPU 阶段。硬门本身不修改；修复的是控制器的可达性条件。相同 trace 在 8 秒收紧 hold 下重跑后，
+`probe-after-tighten-hold.json` 给出 `clip_applied_count=0`、`non_l0_time_fraction=0`，而
+`depth_ge_1_time_fraction=0.01714843218197302`、`depth_ge_2_time_fraction=0.006154110178295506`
+保持不变。这说明门槛现在可达是因为瞬态没有撑过持续时间判据，而不是换了更温和的随机序列或掩盖了
+正深度。
 
 1. **CPU 硬门 1**：Batch 1/2 用 fake clock 重放固定的 `rps=0.08` trace；推荐配置必须满足
    `clip_applied_count == 0` 且 `realized_truncation_count == 0`，否则禁止进入 GPU 阶段。
@@ -402,10 +440,11 @@ decision sidecar 用于语义抽查和重放，但不把已经由 CPU 硬门证�
 1. **低负载零效用门失败**：CPU 固定 trace 出现任意 cap applied/realized truncation、任一后端 cap
    不等于请求目标或任一档位不为 L0，立即停止，不能用 GPU 结果覆盖确定性错误。CPU 两门通过后，
    GPU paired throughput ratio 的 95% 区间越出 `[0.95,1.05]`，核心主张仍失败。
-2. **阈值造成空结果**：GPU 前用 §1.2 重建的 no-clip trace 回放 queue-depth 参数；若默认 L1/L2/L3
-   任一档没有非零触发资格，或 L3 在三个 seed 均不可达，说明配置未覆盖已知动态范围，禁止进入正式
-   sweep。正式 adaptive 运行中 L3 驻留为零不自动算失败，因为收紧本身可能把深度压低；必须联合
-   `Q_inst/Q_bar` 越线与低档控制效果解释，不能把“没有触发”和“触发后有效”混为一谈。
+2. **阈值或 hold 造成空结果**：GPU 前用 §1.2 重建的 no-clip trace 回放 queue-depth 参数；若默认
+   L1/L2/L3 任一档没有非零越阈资格，或高负载持续 episode 全部撑不过 tighten hold，说明配置未覆盖
+   已知动态范围，禁止进入正式 sweep。正式 adaptive 运行中 L3 驻留为零不自动算失败，因为收紧本身
+   可能把深度压低；必须联合 `Q_inst/Q_bar` 越线、`TIGHTEN_HOLD_*` 轨迹与低档控制效果解释，不能把
+   “没有越阈”“越阈但未持续”和“触发后有效”混为一谈。
 3. **高负载没有延迟收益**：相对 no-clip，平均排队等待下降或 interactive SLO 上升的 paired 95%
    区间包含零，则不能声称稳定收益；两者任一方向变坏则记为明确负结果。
 4. **相对 fixed-512 保留收益不足**：定义等待收益保留率
@@ -414,8 +453,9 @@ decision sidecar 用于语义抽查和重放，但不把已经由 CPU 硬门证�
    否则推荐 arm 的两项保留率若任一低于 `0.75`，视为高负载控制过松。
 5. **没有恢复效用**：相对 fixed-512，推荐 arm 的 token throughput 未提高且 realized truncation
    rate 未下降，说明自适应只增加复杂度、没有形成新的 trade-off 点。
-6. **控制自我熄火或 thrashing**：相邻 dispatch 决策出现反向档位切换且切换间隔短于
-   `adaptive_clip_relax_hold_s`，属于实现错误；档位切换数超过正式 dispatch 数的 `10%`，或
+6. **控制自我熄火或 thrashing**：tighten→relax 间隔短于 `adaptive_clip_relax_hold_s`，或
+   relax→tighten 间隔短于 `adaptive_clip_tighten_hold_s`，属于实现错误；档位切换数超过正式
+   dispatch 数的 `10%`，或
    §5.2 的 `tighten -> relax -> retighten` 短周期反复出现，属于控制不稳定，即使聚合延迟好看也
    不能通过。必须报告驻留时间和周期分布，不能只给切换总数。
 7. **方向异常**：Poisson burst 中 `Q_inst` 增加而记录的 `P(t)` 或目标档位变松，说明稳定深度定义、
@@ -423,8 +463,10 @@ decision sidecar 用于语义抽查和重放，但不把已经由 CPU 硬门证�
 
 若自适应再次输给固定 cap，优先按以下假设定位：
 
-- **控制太迟**：首批长请求已经占满 in-flight slot，排队形成后才有正 `Q`；看“首次正深度→首次收紧”与这些请求的 dispatch 时间。
-- **阈值太高/平滑太慢**：高负载长期 L0/L1，收益保留率低；看档位驻留和 `Q_inst/Q_bar` 越线记录。
+- **控制太迟**：首批长请求已经占满 in-flight slot，排队形成后才有正 `Q`，或 8 秒 tighten hold 吃掉
+  了可干预窗口；看“首次正深度→首次收紧”、`TIGHTEN_HOLD_*` 与这些请求的 dispatch 时间。
+- **阈值太高/平滑或收紧 hold 太慢**：高负载长期 L0/L1，收益保留率低；看档位驻留、
+  `Q_inst/Q_bar` 越线记录，以及越阈 episode 是否在 8 秒前结束。
 - **阈值太低/放松太慢**：低负载出现 cap 或吞吐损失；看短 burst 后 L1-L3 驻留时间。
 - **深度不是工作量**：少量超长请求与大量短请求得到相同 count，`Q` 低但 E[S^2] 仍高；按 predictor bucket 分层检查等待和被截请求。
 - **预测器误判**：控制器正确收紧，但 learned source 没有命中真正长尾；比较 predicted bucket、原目标、实际输出和 finish reason，不能偷偷换成未来真实长度。
@@ -440,9 +482,10 @@ decision sidecar 用于语义抽查和重放，但不把已经由 CPU 硬门证�
 
 本方案提出修改/新增路径：`src/sloserve/config.py`、`configs/base.yaml`、`src/sloserve/router/adaptive_clipping.py`、`tests/test_adaptive_clipping.py`、`tests/test_config.py`。
 
-产出：严格配置校验、时间加权 `Q_bar`、L0-L3 状态机、快收紧/慢放松、可注入 clock。测试覆盖
-burst 单调性、同墙钟区间不同事件数量得到相同 EWMA、阈值边界、direct jump、逐档放松、每档重新
-hold、最小/最大 cap，以及固定低负载压力 trace 全程保持 L0。
+产出：严格配置校验、时间加权 `Q_bar`、L0-L3 状态机、带连续证据的直接跳档收紧、逐档慢放松、可
+注入 clock。测试覆盖 burst 单调性、同墙钟区间不同事件数量得到相同 EWMA、阈值边界、收紧 hold 的
+开始/进行中/重置/达成、达成后的 direct jump、逐档放松、每档重新 hold、最小/最大 cap，以及固定
+低负载压力 trace 全程保持 L0。
 
 验收：
 
@@ -452,14 +495,17 @@ uv run ruff check src/sloserve/config.py src/sloserve/router/adaptive_clipping.p
 ```
 
 该批禁止访问 GPU；若确定性 trace 中加入更多 zero-wait arrival 会降低压力或放松档位，立即失败。
-推荐配置在固定 `rps=0.08` trace 上出现任一非 L0 状态，也作为 CPU 硬门失败，不能进入后续真机批次。
+推荐配置在原探针同一固定 `rps=0.08` 压力序列上必须全程 L0 且 `clip_applied_count=0`；持续高压测试
+仍须进入压力对应最紧档，收紧延迟不得超过 `adaptive_clip_tighten_hold_s + one update interval`。
+任一条件不满足都作为 CPU 硬门失败，不能进入后续真机批次。
 
 ### Batch 2：外部 dispatch 接入、审计事实与 parity（CPU）
 
 本方案提出修改路径：`src/sloserve/router/admission.py`、`src/sloserve/router/clipping.py`、`src/sloserve/experiments/benchmark.py`、请求/序列化相关模块；新增 decision-sidecar writer 与对应测试。自适应只在 dispatch 前作用于尚未发送请求；固定路径保持当前 pre-queue 行为。
 
-产出：逐请求决策事实、join 后正确的 effective cap、关闭状态无 sidecar、no-clip 与 fixed-512 golden
-fixtures，以及 fake clock + fake backend 下的低负载零截断配对事实。
+产出：逐请求决策事实（含四种 `TIGHTEN_HOLD_*` 原因）、join 后正确的 effective cap、关闭状态无
+sidecar、no-clip 与 fixed-512 golden fixtures，以及 fake clock + fake backend 下的低负载零截断配对
+事实。
 
 验收：
 

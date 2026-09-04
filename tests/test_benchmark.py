@@ -527,6 +527,7 @@ def test_recommended_low_load_trace_has_zero_utility_cost(
     adaptive_admission = AdmissionControlConfig(
         clip_enabled=True,
         adaptive_clip_enabled=True,
+        adaptive_clip_tighten_hold_s=0.0,
     )
     adaptive_config = config.model_copy(
         update={
@@ -626,7 +627,11 @@ def test_adaptive_sidecar_joins_dispatch_cap_into_request_records(
     )
     router = config.router.model_copy(update={"max_in_flight": 1, "queue_capacity": 3})
     metrics = config.metrics.model_copy(update={"output_directory": tmp_path})
-    admission = AdmissionControlConfig(clip_enabled=True, adaptive_clip_enabled=True)
+    admission = AdmissionControlConfig(
+        clip_enabled=True,
+        adaptive_clip_enabled=True,
+        adaptive_clip_tighten_hold_s=0.0,
+    )
     config = config.model_copy(
         update={
             "workload": workload,

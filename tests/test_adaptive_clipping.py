@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import math
+import runpy
+from pathlib import Path
 
 import pytest
 
@@ -13,6 +15,8 @@ from sloserve.router.adaptive_clipping import (
     AdaptiveClipTrigger,
     build_adaptive_clip_controller,
 )
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 class FakeClock:
@@ -36,6 +40,7 @@ def _enabled_config(**updates: object) -> AdmissionControlConfig:
             **AdmissionControlConfig().model_dump(),
             "clip_enabled": True,
             "adaptive_clip_enabled": True,
+            "adaptive_clip_tighten_hold_s": 0.0,
             **updates,
         }
     )
@@ -146,7 +151,79 @@ def test_burst_directly_jumps_from_l0_to_tightest_level() -> None:
     assert decision.old_level is AdaptiveClipLevel.L0
     assert decision.new_level is AdaptiveClipLevel.L3
     assert decision.selected_cap == 512
-    assert decision.trigger_reason is AdaptiveClipTrigger.TIGHTEN_THRESHOLD
+    assert decision.trigger_reason is AdaptiveClipTrigger.TIGHTEN_HOLD_ELAPSED
+
+
+def test_tightening_waits_for_continuous_hold_before_direct_jump() -> None:
+    clock = FakeClock()
+    controller = _controller(clock, adaptive_clip_tighten_hold_s=8.0)
+
+    started = controller.update(3)
+    clock.advance(7.0)
+    pending = controller.update(3)
+    clock.advance(1.0)
+    elapsed = controller.update(3)
+
+    assert started.new_level is AdaptiveClipLevel.L0
+    assert started.trigger_reason is AdaptiveClipTrigger.TIGHTEN_HOLD_STARTED
+    assert pending.new_level is AdaptiveClipLevel.L0
+    assert pending.trigger_reason is AdaptiveClipTrigger.TIGHTEN_HOLD_PENDING
+    assert elapsed.old_level is AdaptiveClipLevel.L0
+    assert elapsed.new_level is AdaptiveClipLevel.L3
+    assert elapsed.selected_cap == 512
+    assert elapsed.trigger_reason is AdaptiveClipTrigger.TIGHTEN_HOLD_ELAPSED
+
+
+def test_each_tighter_level_requires_its_own_threshold_hold() -> None:
+    clock = FakeClock()
+    controller = _controller(clock, adaptive_clip_tighten_hold_s=8.0)
+
+    controller.update(1)
+    clock.advance(7.0)
+    controller.update(3)
+    clock.advance(1.0)
+    first_elapsed = controller.update(3)
+    clock.advance(7.0)
+    tightest_elapsed = controller.update(3)
+
+    assert first_elapsed.new_level is AdaptiveClipLevel.L1
+    assert first_elapsed.trigger_reason is AdaptiveClipTrigger.TIGHTEN_HOLD_ELAPSED
+    assert tightest_elapsed.new_level is AdaptiveClipLevel.L3
+
+
+def test_tighten_hold_resets_below_threshold_and_restarts_from_zero() -> None:
+    clock = FakeClock()
+    controller = _controller(clock, adaptive_clip_tighten_hold_s=8.0)
+
+    controller.update(1)
+    clock.advance(7.0)
+    assert controller.update(1).new_level is AdaptiveClipLevel.L0
+    reset = controller.update(0)
+    restarted = controller.update(1)
+    clock.advance(7.0)
+    still_l0 = controller.update(1)
+    clock.advance(1.0)
+    tightened = controller.update(1)
+
+    assert reset.trigger_reason is AdaptiveClipTrigger.TIGHTEN_HOLD_RESET
+    assert restarted.trigger_reason is AdaptiveClipTrigger.TIGHTEN_HOLD_STARTED
+    assert still_l0.new_level is AdaptiveClipLevel.L0
+    assert still_l0.trigger_reason is AdaptiveClipTrigger.TIGHTEN_HOLD_PENDING
+    assert tightened.new_level is AdaptiveClipLevel.L1
+    assert tightened.trigger_reason is AdaptiveClipTrigger.TIGHTEN_HOLD_ELAPSED
+
+
+def test_sustained_high_load_tightens_within_hold_plus_one_update_interval() -> None:
+    clock = FakeClock()
+    controller = _controller(clock, adaptive_clip_tighten_hold_s=8.0)
+    decisions = [controller.update(3)]
+
+    while decisions[-1].new_level is AdaptiveClipLevel.L0:
+        clock.advance(1.0)
+        decisions.append(controller.update(3))
+
+    assert decisions[-1].new_level is AdaptiveClipLevel.L3
+    assert decisions[-1].decision_time_s <= 8.0 + 1.0
 
 
 def test_relax_threshold_equality_does_not_start_hold() -> None:
@@ -219,7 +296,7 @@ def test_decision_exposes_all_required_in_memory_fact_fields() -> None:
     assert decision.old_level is AdaptiveClipLevel.L0
     assert decision.new_level is AdaptiveClipLevel.L2
     assert decision.selected_cap == 1024
-    assert decision.trigger_reason is AdaptiveClipTrigger.TIGHTEN_THRESHOLD
+    assert decision.trigger_reason is AdaptiveClipTrigger.TIGHTEN_HOLD_ELAPSED
 
 
 def test_fixed_low_load_trace_stays_at_l0() -> None:
@@ -235,6 +312,18 @@ def test_fixed_low_load_trace_stays_at_l0() -> None:
     assert all(decision.q_bar == 0.0 for decision in decisions)
     assert all(decision.new_level is AdaptiveClipLevel.L0 for decision in decisions)
     assert all(decision.selected_cap is None for decision in decisions)
+
+
+def test_probe_low_load_pressure_sequence_stays_l0_and_never_clips() -> None:
+    run_probe = runpy.run_path(str(PROJECT_ROOT / "scripts/probe_week7_lowload_depth.py"))[
+        "run_probe"
+    ]
+
+    result = run_probe()
+
+    assert result["aggregate"]["non_l0_time_fraction"] == 0.0
+    assert result["aggregate"]["non_l0_entry_count"] == 0
+    assert result["aggregate"]["clip_applied_count"] == 0
 
 
 def test_disabled_default_does_not_construct_controller_or_read_clock() -> None:

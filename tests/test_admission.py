@@ -67,6 +67,7 @@ def _adaptive_config() -> AdmissionControlConfig:
     return AdmissionControlConfig(
         clip_enabled=True,
         adaptive_clip_enabled=True,
+        adaptive_clip_tighten_hold_s=0.0,
     )
 
 

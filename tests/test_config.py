@@ -50,6 +50,7 @@ def test_base_config_loads() -> None:
     assert config.admission.adaptive_clip_tighten_thresholds == (1.0, 2.0, 3.0)
     assert config.admission.adaptive_clip_relax_thresholds == (0.25, 0.75, 1.5)
     assert config.admission.adaptive_clip_ewma_tau_s == 6.0
+    assert config.admission.adaptive_clip_tighten_hold_s == 8.0
     assert config.admission.adaptive_clip_relax_hold_s == 30.0
     assert config.admission.adaptive_clip_capacity_rps is None
     assert config.workload.length_model is LengthModel.UNIFORM_CAP
@@ -227,6 +228,9 @@ def test_enabled_learned_clipping_requires_its_own_estimator_path() -> None:
         ("adaptive_clip_relax_thresholds", [0.25, 0.75, 3.0], "below its tighten"),
         ("adaptive_clip_ewma_tau_s", 0.0, "greater than 0"),
         ("adaptive_clip_ewma_tau_s", float("inf"), "finite number"),
+        ("adaptive_clip_tighten_hold_s", -1.0, "greater than or equal to 0"),
+        ("adaptive_clip_tighten_hold_s", float("nan"), "finite number"),
+        ("adaptive_clip_tighten_hold_s", float("inf"), "finite number"),
         ("adaptive_clip_relax_hold_s", -1.0, "greater than or equal to 0"),
         ("adaptive_clip_relax_hold_s", float("inf"), "finite number"),
         ("adaptive_clip_capacity_rps", 0.0, "greater than 0"),
@@ -290,6 +294,7 @@ def test_disabled_adaptive_defaults_preserve_legacy_config_hash() -> None:
             "adaptive_clip_tighten_thresholds": [2.0, 3.0, 4.0],
             "adaptive_clip_relax_thresholds": [0.5, 1.5, 2.5],
             "adaptive_clip_ewma_tau_s": 12.0,
+            "adaptive_clip_tighten_hold_s": 9.0,
             "adaptive_clip_relax_hold_s": 45.0,
         }
     )

@@ -1316,3 +1316,43 @@ seed），`test_expkb_analysis.py` 的 CSV 夹具缺 `max_in_flight` 列。并�
 Week 7 候选：把截断从"固定 cap"升级为"按队列压力自适应的 cap"，这样低负载时不损失效用、高负载时
 才付出截断代价——这正好接上第 5 周自适应 ceiling 失败留下的问题（当时自适应的是调度阈值，这次
 自适应的是准入侧的工作量）。
+
+## 2026-09-04 — Week 7：收紧侧迟滞修复低负载瞬态误截断
+
+### 要解决的问题与为什么需要
+
+首版队列深度控制器在 `P(t)` 瞬时越阈时立即收紧。固定 `rps=0.08` CPU 探针因此出现 6 次 cap
+applied；稳定深度 `Q>=1`/`Q>=2` 虽只占 1.7148%/0.6154% 墙钟，Poisson 瞬态仍必然偶发，原定
+`clip_applied_count == 0` 硬门按构造不可达。提高阈值不能区分瞬态与持续积压，因此需要直接把持续
+时间纳入收紧资格。
+
+### 关键代码、数据与命令
+
+- `AdmissionControlConfig` 新增默认 `adaptive_clip_tighten_hold_s=8.0`，严格限制为有限非负浮点数；
+  自适应关闭时从 legacy hash 投影排除。
+- 每个目标档位独立累计其收紧阈值以上的连续时间，跌破对应阈值即重置；一个决策可直接跳到自身
+  evidence 已满的最紧档。sidecar 原因区分 `TIGHTEN_HOLD_STARTED/PENDING/RESET/ELAPSED`。
+- 扩展 `scripts/probe_week7_lowload_depth.py` 输出低负载 `Q>=1` 与非 L0 episode 分布，并从 expK-B
+  no-clip JSONL 重建高负载持续时间。低负载 `Q>=1` P50/P95/max 为
+  4.611161/6.151278/6.151278 秒；高负载每 repetition 主导 `Q>=1` episode P50/P95/max 为
+  13.324348/43.151063/43.151063 秒。因此选择 8 秒：超过低负载观测上界，同时短于高负载典型主导
+  episode。
+- 聚焦命令：`uv run pytest tests/test_config.py tests/test_adaptive_clipping.py
+  tests/test_admission.py tests/test_benchmark.py tests/test_metrics_records.py`；另用版本化探针脚本重跑同一
+  三 seed、三 repetition 序列。执行环境只使用 CPU。
+
+### 成功信号、失败诊断与实际结果
+
+- 80 项聚焦测试通过；覆盖未满 hold 不收紧、满 hold 后 direct jump、跌阈重置且重新计时、高负载
+  延迟不超过 hold 加一个更新间隔，以及既有 EWMA/放松/稳定深度/parity 行为。
+- 全量 `uv run pytest` 为 189 passed；Ruff lint、82 文件 format check 与 `uv lock --check` 均通过。
+- 历史 `probe.json` 保留原始 6 次；新 `probe-after-tighten-hold.json` 在完全相同的压力序列上得到
+  `clip_applied_count=0`、`non_l0_time_fraction=0`。深度占比仍为 1.7148%/0.6154%，证明修复来自
+  持续性判据，而不是换 seed 或降低压力。
+- 代价是高负载收紧相对旧控制器至少增加 8 秒，并可能再等待一个事件更新间隔；expL 必须用首次正
+  深度到首次收紧、queue P95/P99、interactive SLO 与 fixed-512 收益保留率检验这项损失。
+
+### 下一步
+
+完成全量 pytest、Ruff、lock、golden 字节 parity 与 legacy hash 明示核对后，再进入后续 expL CPU
+分析批次；本步骤不启动 vLLM，也不产生真机性能结论。

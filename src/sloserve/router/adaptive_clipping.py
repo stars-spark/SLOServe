@@ -24,7 +24,10 @@ class AdaptiveClipTrigger(StrEnum):
     """Auditable reasons for one controller decision."""
 
     NO_CHANGE = "no_change"
-    TIGHTEN_THRESHOLD = "tighten_threshold"
+    TIGHTEN_HOLD_STARTED = "tighten_hold_started"
+    TIGHTEN_HOLD_PENDING = "tighten_hold_pending"
+    TIGHTEN_HOLD_RESET = "tighten_hold_reset"
+    TIGHTEN_HOLD_ELAPSED = "tighten_hold_elapsed"
     RELAX_HOLD_STARTED = "relax_hold_started"
     RELAX_HOLD_PENDING = "relax_hold_pending"
     RELAX_HOLD_RESET = "relax_hold_reset"
@@ -45,7 +48,7 @@ class AdaptiveClipDecision:
 
 
 class AdaptiveClipController:
-    """Apply fast tightening and held, one-level-at-a-time relaxation."""
+    """Apply held direct tightening and held, one-level-at-a-time relaxation."""
 
     def __init__(
         self,
@@ -64,11 +67,13 @@ class AdaptiveClipController:
         self._tighten_thresholds = config.adaptive_clip_tighten_thresholds
         self._relax_thresholds = config.adaptive_clip_relax_thresholds
         self._tau_s = config.adaptive_clip_ewma_tau_s
+        self._tighten_hold_s = config.adaptive_clip_tighten_hold_s
         self._relax_hold_s = config.adaptive_clip_relax_hold_s
         self._level = AdaptiveClipLevel.L0
         self._q_inst = 0
         self._q_bar = 0.0
         self._last_update_s: float | None = None
+        self._tighten_since_s: list[float | None] = [None] * len(self._tighten_thresholds)
         self._relax_since_s: float | None = None
 
     @property
@@ -128,21 +133,64 @@ class AdaptiveClipController:
 
     def _update_level(self, now_s: float) -> AdaptiveClipTrigger:
         target_level = AdaptiveClipLevel(bisect_right(self._tighten_thresholds, self.pressure))
-        if target_level > self._level:
-            self._level = target_level
+        tighten_started = False
+        tighten_pending = False
+        tighten_reset = False
+        elapsed_levels: list[AdaptiveClipLevel] = []
+        for level_value, threshold in enumerate(self._tighten_thresholds, start=1):
+            level = AdaptiveClipLevel(level_value)
+            if level <= self._level:
+                self._tighten_since_s[level_value - 1] = None
+                continue
+            tighten_since_s = self._tighten_since_s[level_value - 1]
+            if self.pressure >= threshold:
+                if tighten_since_s is None:
+                    tighten_since_s = now_s
+                    self._tighten_since_s[level_value - 1] = now_s
+                    tighten_started = True
+                else:
+                    tighten_pending = True
+                if now_s - tighten_since_s >= self._tighten_hold_s:
+                    elapsed_levels.append(level)
+            elif tighten_since_s is not None:
+                self._tighten_since_s[level_value - 1] = None
+                tighten_reset = True
+
+        if elapsed_levels:
+            self._level = max(elapsed_levels)
+            for index in range(int(self._level)):
+                self._tighten_since_s[index] = None
             self._relax_since_s = None
-            return AdaptiveClipTrigger.TIGHTEN_THRESHOLD
+            return AdaptiveClipTrigger.TIGHTEN_HOLD_ELAPSED
+
+        if target_level > self._level:
+            self._relax_since_s = None
+            if tighten_reset:
+                return AdaptiveClipTrigger.TIGHTEN_HOLD_RESET
+            if tighten_started:
+                return AdaptiveClipTrigger.TIGHTEN_HOLD_STARTED
+            if tighten_pending:
+                return AdaptiveClipTrigger.TIGHTEN_HOLD_PENDING
+            raise RuntimeError("tighten target has no hold state")
 
         if self._level is AdaptiveClipLevel.L0:
             self._relax_since_s = None
-            return AdaptiveClipTrigger.NO_CHANGE
+            return (
+                AdaptiveClipTrigger.TIGHTEN_HOLD_RESET
+                if tighten_reset
+                else AdaptiveClipTrigger.NO_CHANGE
+            )
 
         relax_threshold = self._relax_thresholds[int(self._level) - 1]
         if self.pressure >= relax_threshold:
             if self._relax_since_s is not None:
                 self._relax_since_s = None
                 return AdaptiveClipTrigger.RELAX_HOLD_RESET
-            return AdaptiveClipTrigger.NO_CHANGE
+            return (
+                AdaptiveClipTrigger.TIGHTEN_HOLD_RESET
+                if tighten_reset
+                else AdaptiveClipTrigger.NO_CHANGE
+            )
 
         if self._relax_since_s is None:
             self._relax_since_s = now_s

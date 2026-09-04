@@ -193,7 +193,7 @@ def test_adaptive_cap_sidecar_writer_preserves_required_fact_order(tmp_path: Pat
         old_level=AdaptiveClipLevel.L1,
         new_level=AdaptiveClipLevel.L3,
         selected_cap=512,
-        trigger_reason=AdaptiveClipTrigger.TIGHTEN_THRESHOLD,
+        trigger_reason=AdaptiveClipTrigger.TIGHTEN_HOLD_ELAPSED,
     )
 
     output = write_adaptive_cap_decisions_jsonl(tmp_path / "decisions.jsonl", (decision,))
@@ -202,5 +202,5 @@ def test_adaptive_cap_sidecar_writer_preserves_required_fact_order(tmp_path: Pat
         '{"request_id":"request-000007","repetition_index":2,'
         '"decision_time_s":12.5,"q_inst":3,"q_bar":1.25,'
         '"old_level":"L1","new_level":"L3","selected_cap":512,'
-        '"trigger_reason":"tighten_threshold"}\n'
+        '"trigger_reason":"tighten_hold_elapsed"}\n'
     )
