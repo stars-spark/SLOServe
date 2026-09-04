@@ -1404,3 +1404,43 @@ applied；稳定深度 `Q>=1`/`Q>=2` 虽只占 1.7148%/0.6154% 墙钟，Poisson 
 default。若 fast 高负载明显更优且低负载 CPU 仍为零截断，则报告 4 秒过保守并注明 fast 缺低负载
 真机证据；若优势不明显，则报告该权衡在当前单机规模下不可辨识。本次未启动 vLLM、未使用 GPU、
 未提交代码。
+
+## 2026-09-04 — Week 7 Batch 3：expL sweep、审计分析与预注册失败门
+
+### 要解决的问题与为什么需要
+
+把设计文档中冻结的 24 点非对称矩阵变成可加载配置，并在真机 sweep 之前把统计单位、原始事实对账、
+低负载等价性和六条预注册失败规则固化为代码。否则聚合 CSV、request JSONL 与 decision sidecar
+可能互相矛盾，或把同一运行内请求误当独立样本，最终得到无法审计的显著性与成功结论。
+
+### 关键代码、方法与命令
+
+- `configs/sweeps/expL-adaptive-clipping.yaml` 以 seed 区组显式列出高负载 6 臂和低负载 2 臂；每个
+  adaptive 点逐项写入冻结 signal、caps、tighten/relax threshold、EWMA tau、两侧 hold 与容量。
+- sweep point schema 支持全部 adaptive admission override；聚合 CSV 记录这些控制字段、完成 token
+  总数和墙钟窗口。`config-check` 同时识别普通实验配置与 sweep 配置。
+- `analysis/expl.py` 从 request JSONL 重算延迟、SLO、终态、截断、token reduction/totals 与吞吐，
+  再和 sweep CSV 逐字段对账；adaptive 点还要求 sidecar 与所有 dispatched request 一一对应。
+- 推断统计只重采样完整 seed cluster。paired wait/SLO/throughput/truncation 差值与 ratio 使用相同
+  三 seed；没有把同一次 repetition 中的请求当独立样本。
+- 控制健康度按 repetition 重建 L0-L3 驻留 episode、进入/有向切换、反向间隔、完整
+  tighten-relax-retighten 周期、首次正深度到收紧和压力归零到放松；M/G/1 继续按
+  `max_in_flight` 做 concurrency scaling，且只标作方向诊断。
+- 聚焦命令为 `uv run pytest tests/test_sweep.py tests/test_expl_analysis.py`；全量回归为
+  `uv run pytest`。受限环境的默认 uv cache 只读，首次 Ruff 命令在获取 cache lock 前失败；设置
+  `UV_CACHE_DIR=/tmp/sloserve-uv-cache` 后执行相同检查通过，没有放宽代码或测试。
+
+### 成功信号、失败诊断与实际结果
+
+- 聚焦测试 39 项通过，全量测试 225 项通过。每条预注册门都有通过与拒绝 fixture；额外覆盖缺
+  sidecar、重复 decision、request/decision 不匹配和 sweep aggregate/raw mismatch 的硬失败。
+- 从 `results/raw/week6-expK-B/` 三份真实 no-clip JSONL、只取 `sequence_id>=4` 的正式请求重建：
+  三 seed 峰值为 5/3/3；Q>=1/2/3 的墙钟资格分别为
+  227.53841747200931/159.0692358580054/110.96182093699463 秒，L1-L3 均有非零资格且 L3 可达。
+- 这些是对 Week 6 已保存请求事实的 CPU 重放，不是 expL 性能结果。本批未启动 vLLM、未访问 GPU，
+  也没有创建或推测任何 expL 真机性能数字。
+
+### 下一步
+
+在 Batch 4 完成 lock、Ruff、parity、legacy hash 与旧 expK-B 分析重放后，才可进入真实 GPU 语义
+smoke。正式 expL 数据不存在时，分析脚本应因缺 24 点事实而失败，不能用合成结果代替。

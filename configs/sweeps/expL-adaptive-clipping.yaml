@@ -1,0 +1,75 @@
+# Experiment L: adapt the learned max-token cap at the external dispatch boundary. FCFS fixes
+# request ordering so this sweep isolates workload reduction; all retained arm/load pairs replay
+# the same three seeds. The matrix is deliberately asymmetric: low load contains only no-clip and
+# the recommended queue-depth controller, while high load contains all six registered arms.
+#
+# OPERATING-POINT CALIBRATION. The rps=0.17 high-load point is the stable operating point from
+# expK-B: it is below the measured ~0.230 request/s capacity under the machine's thermally
+# constrained power profile, while the saved no-clip trace has enough stable external backlog to
+# qualify at all frozen default thresholds [1, 2, 3]. The rps=0.08 point tests whether transient
+# Poisson overlap can cause an otherwise unnecessary adaptive cap.
+#
+# THERMAL CONSTRAINTS AND POWER PROFILE. Formal runs use turbo disabled and the ACPI `balanced`
+# profile, with a cooldown gate and hard stops above 71 C GPU or 88 C CPU, exactly as expK-B.
+# This profile changes service capacity. Therefore expL ABSOLUTE latencies must not be compared
+# with expK-A or expK-B runs made under another power/thermal profile; only within-expL arm
+# comparisons under the same conditions are valid. Interrupted and failed points remain retained.
+base_config: ../base.yaml
+base_overrides:
+  server:
+    gpu_memory_utilization: 0.5
+    max_num_seqs: 16
+  router:
+    policy: fcfs
+    max_in_flight: 4
+  admission:
+    clip_enabled: false
+    clip_max_tokens: 2048
+    clip_source: learned
+    clip_estimator_path: results/artifacts/length-predictor.json
+    adaptive_clip_enabled: false
+  workload:
+    arrival_process: poisson
+    request_rate_rps: 0.17
+    total_requests: 24
+    interactive_fraction: 0.5
+    warmup_requests: 4
+    repetitions: 3
+    length_model: realistic
+    realistic_length:
+      advertised_cap_tokens: 2048
+      clamp_max: 2048
+      force_exact_output_tokens: true
+  metrics:
+    output_directory: results/raw/week7-expL
+
+points:
+  # Seed block 1. Rotate all high-load arms before the two low-load equivalence points.
+  - {label: high-no-clip-s1, request_rate_rps: 0.17, random_seed: 20250825, clip_enabled: false, adaptive_clip_enabled: false}
+  - {label: high-fixed-512-s1, request_rate_rps: 0.17, random_seed: 20250825, clip_enabled: true, clip_max_tokens: 512, adaptive_clip_enabled: false}
+  - {label: high-adaptive-q-default-s1, request_rate_rps: 0.17, random_seed: 20250825, clip_enabled: true, adaptive_clip_enabled: true, adaptive_clip_signal: queue_depth_ewma, adaptive_clip_caps: [1536, 1024, 512], adaptive_clip_tighten_thresholds: [1.0, 2.0, 3.0], adaptive_clip_relax_thresholds: [0.25, 0.75, 1.5], adaptive_clip_ewma_tau_s: 6.0, adaptive_clip_tighten_hold_s: 4.0, adaptive_clip_relax_hold_s: 30.0}
+  - {label: high-adaptive-q-fast-s1, request_rate_rps: 0.17, random_seed: 20250825, clip_enabled: true, adaptive_clip_enabled: true, adaptive_clip_signal: queue_depth_ewma, adaptive_clip_caps: [1536, 1024, 512], adaptive_clip_tighten_thresholds: [1.0, 2.0, 3.0], adaptive_clip_relax_thresholds: [0.25, 0.75, 1.5], adaptive_clip_ewma_tau_s: 6.0, adaptive_clip_tighten_hold_s: 2.0, adaptive_clip_relax_hold_s: 30.0}
+  - {label: high-adaptive-q-conservative-s1, request_rate_rps: 0.17, random_seed: 20250825, clip_enabled: true, adaptive_clip_enabled: true, adaptive_clip_signal: queue_depth_ewma, adaptive_clip_caps: [1536, 1024, 512], adaptive_clip_tighten_thresholds: [2.0, 3.0, 4.0], adaptive_clip_relax_thresholds: [0.5, 1.5, 2.5], adaptive_clip_ewma_tau_s: 12.0, adaptive_clip_tighten_hold_s: 4.0, adaptive_clip_relax_hold_s: 45.0}
+  - {label: high-adaptive-rho-fixed-capacity-s1, request_rate_rps: 0.17, random_seed: 20250825, clip_enabled: true, adaptive_clip_enabled: true, adaptive_clip_signal: rho_hat, adaptive_clip_caps: [1536, 1024, 512], adaptive_clip_tighten_thresholds: [0.70, 0.85, 1.00], adaptive_clip_relax_thresholds: [0.60, 0.75, 0.90], adaptive_clip_ewma_tau_s: 10.0, adaptive_clip_tighten_hold_s: 4.0, adaptive_clip_relax_hold_s: 10.0, adaptive_clip_capacity_rps: 0.230}
+  - {label: low-no-clip-s1, request_rate_rps: 0.08, random_seed: 20250825, clip_enabled: false, adaptive_clip_enabled: false}
+  - {label: low-adaptive-q-default-s1, request_rate_rps: 0.08, random_seed: 20250825, clip_enabled: true, adaptive_clip_enabled: true, adaptive_clip_signal: queue_depth_ewma, adaptive_clip_caps: [1536, 1024, 512], adaptive_clip_tighten_thresholds: [1.0, 2.0, 3.0], adaptive_clip_relax_thresholds: [0.25, 0.75, 1.5], adaptive_clip_ewma_tau_s: 6.0, adaptive_clip_tighten_hold_s: 4.0, adaptive_clip_relax_hold_s: 30.0}
+
+  # Seed block 2.
+  - {label: high-no-clip-s2, request_rate_rps: 0.17, random_seed: 11, clip_enabled: false, adaptive_clip_enabled: false}
+  - {label: high-fixed-512-s2, request_rate_rps: 0.17, random_seed: 11, clip_enabled: true, clip_max_tokens: 512, adaptive_clip_enabled: false}
+  - {label: high-adaptive-q-default-s2, request_rate_rps: 0.17, random_seed: 11, clip_enabled: true, adaptive_clip_enabled: true, adaptive_clip_signal: queue_depth_ewma, adaptive_clip_caps: [1536, 1024, 512], adaptive_clip_tighten_thresholds: [1.0, 2.0, 3.0], adaptive_clip_relax_thresholds: [0.25, 0.75, 1.5], adaptive_clip_ewma_tau_s: 6.0, adaptive_clip_tighten_hold_s: 4.0, adaptive_clip_relax_hold_s: 30.0}
+  - {label: high-adaptive-q-fast-s2, request_rate_rps: 0.17, random_seed: 11, clip_enabled: true, adaptive_clip_enabled: true, adaptive_clip_signal: queue_depth_ewma, adaptive_clip_caps: [1536, 1024, 512], adaptive_clip_tighten_thresholds: [1.0, 2.0, 3.0], adaptive_clip_relax_thresholds: [0.25, 0.75, 1.5], adaptive_clip_ewma_tau_s: 6.0, adaptive_clip_tighten_hold_s: 2.0, adaptive_clip_relax_hold_s: 30.0}
+  - {label: high-adaptive-q-conservative-s2, request_rate_rps: 0.17, random_seed: 11, clip_enabled: true, adaptive_clip_enabled: true, adaptive_clip_signal: queue_depth_ewma, adaptive_clip_caps: [1536, 1024, 512], adaptive_clip_tighten_thresholds: [2.0, 3.0, 4.0], adaptive_clip_relax_thresholds: [0.5, 1.5, 2.5], adaptive_clip_ewma_tau_s: 12.0, adaptive_clip_tighten_hold_s: 4.0, adaptive_clip_relax_hold_s: 45.0}
+  - {label: high-adaptive-rho-fixed-capacity-s2, request_rate_rps: 0.17, random_seed: 11, clip_enabled: true, adaptive_clip_enabled: true, adaptive_clip_signal: rho_hat, adaptive_clip_caps: [1536, 1024, 512], adaptive_clip_tighten_thresholds: [0.70, 0.85, 1.00], adaptive_clip_relax_thresholds: [0.60, 0.75, 0.90], adaptive_clip_ewma_tau_s: 10.0, adaptive_clip_tighten_hold_s: 4.0, adaptive_clip_relax_hold_s: 10.0, adaptive_clip_capacity_rps: 0.230}
+  - {label: low-no-clip-s2, request_rate_rps: 0.08, random_seed: 11, clip_enabled: false, adaptive_clip_enabled: false}
+  - {label: low-adaptive-q-default-s2, request_rate_rps: 0.08, random_seed: 11, clip_enabled: true, adaptive_clip_enabled: true, adaptive_clip_signal: queue_depth_ewma, adaptive_clip_caps: [1536, 1024, 512], adaptive_clip_tighten_thresholds: [1.0, 2.0, 3.0], adaptive_clip_relax_thresholds: [0.25, 0.75, 1.5], adaptive_clip_ewma_tau_s: 6.0, adaptive_clip_tighten_hold_s: 4.0, adaptive_clip_relax_hold_s: 30.0}
+
+  # Seed block 3.
+  - {label: high-no-clip-s3, request_rate_rps: 0.17, random_seed: 202, clip_enabled: false, adaptive_clip_enabled: false}
+  - {label: high-fixed-512-s3, request_rate_rps: 0.17, random_seed: 202, clip_enabled: true, clip_max_tokens: 512, adaptive_clip_enabled: false}
+  - {label: high-adaptive-q-default-s3, request_rate_rps: 0.17, random_seed: 202, clip_enabled: true, adaptive_clip_enabled: true, adaptive_clip_signal: queue_depth_ewma, adaptive_clip_caps: [1536, 1024, 512], adaptive_clip_tighten_thresholds: [1.0, 2.0, 3.0], adaptive_clip_relax_thresholds: [0.25, 0.75, 1.5], adaptive_clip_ewma_tau_s: 6.0, adaptive_clip_tighten_hold_s: 4.0, adaptive_clip_relax_hold_s: 30.0}
+  - {label: high-adaptive-q-fast-s3, request_rate_rps: 0.17, random_seed: 202, clip_enabled: true, adaptive_clip_enabled: true, adaptive_clip_signal: queue_depth_ewma, adaptive_clip_caps: [1536, 1024, 512], adaptive_clip_tighten_thresholds: [1.0, 2.0, 3.0], adaptive_clip_relax_thresholds: [0.25, 0.75, 1.5], adaptive_clip_ewma_tau_s: 6.0, adaptive_clip_tighten_hold_s: 2.0, adaptive_clip_relax_hold_s: 30.0}
+  - {label: high-adaptive-q-conservative-s3, request_rate_rps: 0.17, random_seed: 202, clip_enabled: true, adaptive_clip_enabled: true, adaptive_clip_signal: queue_depth_ewma, adaptive_clip_caps: [1536, 1024, 512], adaptive_clip_tighten_thresholds: [2.0, 3.0, 4.0], adaptive_clip_relax_thresholds: [0.5, 1.5, 2.5], adaptive_clip_ewma_tau_s: 12.0, adaptive_clip_tighten_hold_s: 4.0, adaptive_clip_relax_hold_s: 45.0}
+  - {label: high-adaptive-rho-fixed-capacity-s3, request_rate_rps: 0.17, random_seed: 202, clip_enabled: true, adaptive_clip_enabled: true, adaptive_clip_signal: rho_hat, adaptive_clip_caps: [1536, 1024, 512], adaptive_clip_tighten_thresholds: [0.70, 0.85, 1.00], adaptive_clip_relax_thresholds: [0.60, 0.75, 0.90], adaptive_clip_ewma_tau_s: 10.0, adaptive_clip_tighten_hold_s: 4.0, adaptive_clip_relax_hold_s: 10.0, adaptive_clip_capacity_rps: 0.230}
+  - {label: low-no-clip-s3, request_rate_rps: 0.08, random_seed: 202, clip_enabled: false, adaptive_clip_enabled: false}
+  - {label: low-adaptive-q-default-s3, request_rate_rps: 0.08, random_seed: 202, clip_enabled: true, adaptive_clip_enabled: true, adaptive_clip_signal: queue_depth_ewma, adaptive_clip_caps: [1536, 1024, 512], adaptive_clip_tighten_thresholds: [1.0, 2.0, 3.0], adaptive_clip_relax_thresholds: [0.25, 0.75, 1.5], adaptive_clip_ewma_tau_s: 6.0, adaptive_clip_tighten_hold_s: 4.0, adaptive_clip_relax_hold_s: 30.0}

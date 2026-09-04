@@ -223,7 +223,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Run a SLOServe development command."""
     args = build_parser().parse_args(argv)
     if args.command == "config-check":
-        config = load_config(args.config)
+        try:
+            definition = load_sweep_config(args.config)
+        except ValueError:
+            config = load_config(args.config)
+            point_count = None
+        else:
+            config = definition.base_config
+            point_count = len(definition.points)
         summary = {
             "model": config.backend.model,
             "model_revision": config.backend.model_revision,
@@ -232,6 +239,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             "repetitions": config.workload.repetitions,
             "tokenizer_revision": config.backend.tokenizer_revision,
         }
+        if point_count is not None:
+            summary["sweep_points"] = point_count
         print(json.dumps(summary, indent=2, sort_keys=True))
         return 0
     if args.command == "serve-command":

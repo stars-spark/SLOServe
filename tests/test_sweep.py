@@ -15,6 +15,7 @@ import pytest
 
 from sloserve.cli import build_parser, build_sweep_runtime
 from sloserve.config import (
+    AdaptiveClipSignal,
     ArrivalProcess,
     ClipSource,
     ExperimentConfig,
@@ -26,6 +27,7 @@ from sloserve.config import (
 from sloserve.experiments.sweep import (
     SWEEP_RESULT_COLUMNS,
     SweepPoint,
+    config_for_point,
     load_sweep_config,
     run_sweep,
 )
@@ -185,6 +187,7 @@ def test_versioned_sweep_configs_load_expected_matrices() -> None:
         "expI-multilevel.yaml": 4,
         "expK-A-length-source.yaml": 18,
         "expK-B-clipping.yaml": 12,
+        "expL-adaptive-clipping.yaml": 24,
     }
 
     definitions = {
@@ -234,6 +237,106 @@ def test_versioned_sweep_configs_load_expected_matrices() -> None:
     assert [point.clip_max_tokens for point in clipping.points[3:]] == (
         [1536] * 3 + [1024] * 3 + [512] * 3
     )
+
+
+def test_expl_sweep_is_the_frozen_24_point_asymmetric_matrix() -> None:
+    definition = load_sweep_config(
+        PROJECT_ROOT / "configs" / "sweeps" / "expL-adaptive-clipping.yaml"
+    )
+    configured = [config_for_point(definition.base_config, point) for point in definition.points]
+    labels = [point.label for point in definition.points]
+    seeds = {20250825, 11, 202}
+
+    assert len(labels) == 24
+    assert len(set(labels)) == 24
+    high = [
+        (point, config)
+        for point, config in zip(definition.points, configured, strict=True)
+        if point.label.startswith("high-")
+    ]
+    low = [
+        (point, config)
+        for point, config in zip(definition.points, configured, strict=True)
+        if point.label.startswith("low-")
+    ]
+    assert len(high) == 18
+    assert len(low) == 6
+
+    expected_high_arms = {
+        "no-clip",
+        "fixed-512",
+        "adaptive-q-default",
+        "adaptive-q-fast",
+        "adaptive-q-conservative",
+        "adaptive-rho-fixed-capacity",
+    }
+    expected_low_arms = {"no-clip", "adaptive-q-default"}
+
+    def arm(label: str, load: str) -> str:
+        prefix = f"{load}-"
+        return label.removeprefix(prefix).rsplit("-s", 1)[0]
+
+    assert {arm(point.label, "high") for point, _ in high} == expected_high_arms
+    assert {arm(point.label, "low") for point, _ in low} == expected_low_arms
+    for load, points, expected_arms in (
+        ("high", high, expected_high_arms),
+        ("low", low, expected_low_arms),
+    ):
+        for expected_arm in expected_arms:
+            assert {
+                config.workload.random_seed
+                for point, config in points
+                if arm(point.label, load) == expected_arm
+            } == seeds
+
+    for config in configured:
+        assert config.router.policy is SchedulerPolicyName.FCFS
+        assert config.router.max_in_flight == 4
+        assert config.workload.repetitions == 3
+        assert config.workload.total_requests == 24
+        assert config.workload.warmup_requests == 4
+        assert config.workload.length_model is LengthModel.REALISTIC
+        assert config.workload.realistic_length is not None
+        assert config.workload.realistic_length.force_exact_output_tokens is True
+        assert config.admission.clip_source is ClipSource.LEARNED
+
+    adaptive = {
+        arm(point.label, "high"): config.admission
+        for point, config in high
+        if "adaptive-" in point.label
+    }
+    assert adaptive["adaptive-q-default"].adaptive_clip_signal is (
+        AdaptiveClipSignal.QUEUE_DEPTH_EWMA
+    )
+    assert adaptive["adaptive-q-default"].adaptive_clip_tighten_thresholds == (1.0, 2.0, 3.0)
+    assert adaptive["adaptive-q-default"].adaptive_clip_relax_thresholds == (0.25, 0.75, 1.5)
+    assert adaptive["adaptive-q-default"].adaptive_clip_ewma_tau_s == 6.0
+    assert adaptive["adaptive-q-default"].adaptive_clip_tighten_hold_s == 4.0
+    assert adaptive["adaptive-q-default"].adaptive_clip_relax_hold_s == 30.0
+    assert adaptive["adaptive-q-default"].adaptive_clip_capacity_rps is None
+    assert adaptive["adaptive-q-fast"].adaptive_clip_tighten_hold_s == 2.0
+    assert adaptive["adaptive-q-conservative"].adaptive_clip_tighten_thresholds == (
+        2.0,
+        3.0,
+        4.0,
+    )
+    assert adaptive["adaptive-q-conservative"].adaptive_clip_relax_thresholds == (
+        0.5,
+        1.5,
+        2.5,
+    )
+    assert adaptive["adaptive-q-conservative"].adaptive_clip_ewma_tau_s == 12.0
+    assert adaptive["adaptive-q-conservative"].adaptive_clip_tighten_hold_s == 4.0
+    assert adaptive["adaptive-q-conservative"].adaptive_clip_relax_hold_s == 45.0
+    rho = adaptive["adaptive-rho-fixed-capacity"]
+    assert rho.adaptive_clip_signal is AdaptiveClipSignal.RHO_HAT
+    assert rho.adaptive_clip_tighten_thresholds == (0.70, 0.85, 1.00)
+    assert rho.adaptive_clip_relax_thresholds == (0.60, 0.75, 0.90)
+    assert rho.adaptive_clip_ewma_tau_s == 10.0
+    assert rho.adaptive_clip_tighten_hold_s == 4.0
+    assert rho.adaptive_clip_relax_hold_s == 10.0
+    assert rho.adaptive_clip_capacity_rps == 0.230
+    assert all(config.adaptive_clip_caps == (1536, 1024, 512) for config in adaptive.values())
 
 
 def test_sweep_cli_parser_and_runtime_factories_are_lazy_and_fresh() -> None:

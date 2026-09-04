@@ -17,6 +17,7 @@ from pydantic import Field
 
 from sloserve.analysis.metrics import MetricsSummary
 from sloserve.config import (
+    AdaptiveClipSignal,
     ClipSource,
     ExperimentConfig,
     LengthSource,
@@ -52,6 +53,15 @@ SWEEP_RESULT_COLUMNS = (
     "clip_max_tokens",
     "clip_source",
     "clip_estimator_path",
+    "adaptive_clip_enabled",
+    "adaptive_clip_signal",
+    "adaptive_clip_caps",
+    "adaptive_clip_tighten_thresholds",
+    "adaptive_clip_relax_thresholds",
+    "adaptive_clip_ewma_tau_s",
+    "adaptive_clip_tighten_hold_s",
+    "adaptive_clip_relax_hold_s",
+    "adaptive_clip_capacity_rps",
     "length_model",
     "prompt_kinds",
     "prompt_kind_fractions",
@@ -72,6 +82,8 @@ SWEEP_RESULT_COLUMNS = (
     "timeout_count",
     "cancelled_count",
     "rejected_count",
+    "success_output_tokens",
+    "wall_clock_window_s",
     "token_throughput_per_s",
     "ttft_p50_s",
     "ttft_p95_s",
@@ -120,6 +132,15 @@ class SweepPoint(StrictModel):
     clip_max_tokens: int | None = Field(default=None, ge=1)
     clip_source: ClipSource | None = None
     clip_estimator_path: str | None = None
+    adaptive_clip_enabled: bool | None = None
+    adaptive_clip_signal: AdaptiveClipSignal | None = None
+    adaptive_clip_caps: tuple[int, ...] | None = None
+    adaptive_clip_tighten_thresholds: tuple[float, ...] | None = None
+    adaptive_clip_relax_thresholds: tuple[float, ...] | None = None
+    adaptive_clip_ewma_tau_s: float | None = Field(default=None, gt=0)
+    adaptive_clip_tighten_hold_s: float | None = Field(default=None, ge=0)
+    adaptive_clip_relax_hold_s: float | None = Field(default=None, ge=0)
+    adaptive_clip_capacity_rps: float | None = Field(default=None, gt=0)
     aging_levels: int | None = Field(default=None, ge=1)
     adaptive_ceiling: bool | None = None
     ceiling_margin: float | None = Field(default=None, gt=0)
@@ -194,7 +215,8 @@ def _merge_mappings(base: Mapping[str, Any], overrides: Mapping[str, Any]) -> di
     return merged
 
 
-def _config_for_point(base_config: ExperimentConfig, point: SweepPoint) -> ExperimentConfig:
+def config_for_point(base_config: ExperimentConfig, point: SweepPoint) -> ExperimentConfig:
+    """Apply one validated point without mutating the shared sweep base configuration."""
     router_updates: dict[str, object] = {}
     workload_updates: dict[str, object] = {}
     slo_updates: dict[str, object] = {}
@@ -214,6 +236,15 @@ def _config_for_point(base_config: ExperimentConfig, point: SweepPoint) -> Exper
         "clip_max_tokens",
         "clip_source",
         "clip_estimator_path",
+        "adaptive_clip_enabled",
+        "adaptive_clip_signal",
+        "adaptive_clip_caps",
+        "adaptive_clip_tighten_thresholds",
+        "adaptive_clip_relax_thresholds",
+        "adaptive_clip_ewma_tau_s",
+        "adaptive_clip_tighten_hold_s",
+        "adaptive_clip_relax_hold_s",
+        "adaptive_clip_capacity_rps",
     ):
         value = getattr(point, field_name)
         if value is not None:
@@ -273,6 +304,19 @@ def _metric_row(label: str, config: ExperimentConfig, metrics: MetricsSummary) -
         "clip_max_tokens": config.admission.clip_max_tokens,
         "clip_source": config.admission.clip_source.value,
         "clip_estimator_path": config.admission.clip_estimator_path,
+        "adaptive_clip_enabled": config.admission.adaptive_clip_enabled,
+        "adaptive_clip_signal": config.admission.adaptive_clip_signal.value,
+        "adaptive_clip_caps": json.dumps(config.admission.adaptive_clip_caps),
+        "adaptive_clip_tighten_thresholds": json.dumps(
+            config.admission.adaptive_clip_tighten_thresholds
+        ),
+        "adaptive_clip_relax_thresholds": json.dumps(
+            config.admission.adaptive_clip_relax_thresholds
+        ),
+        "adaptive_clip_ewma_tau_s": config.admission.adaptive_clip_ewma_tau_s,
+        "adaptive_clip_tighten_hold_s": config.admission.adaptive_clip_tighten_hold_s,
+        "adaptive_clip_relax_hold_s": config.admission.adaptive_clip_relax_hold_s,
+        "adaptive_clip_capacity_rps": config.admission.adaptive_clip_capacity_rps,
         "length_model": config.workload.length_model.value,
         "prompt_kinds": json.dumps(realistic.kinds) if realistic is not None else None,
         "prompt_kind_fractions": (
@@ -299,6 +343,8 @@ def _metric_row(label: str, config: ExperimentConfig, metrics: MetricsSummary) -
         "timeout_count": metrics.timeout_count,
         "cancelled_count": metrics.cancelled_count,
         "rejected_count": metrics.rejected_count,
+        "success_output_tokens": metrics.success_output_tokens,
+        "wall_clock_window_s": metrics.wall_clock_window_s,
         "token_throughput_per_s": metrics.token_throughput_per_s,
         "ttft_p50_s": metrics.ttft_s.p50,
         "ttft_p95_s": metrics.ttft_s.p95,
@@ -367,7 +413,7 @@ async def run_sweep(
 
     rows: list[SweepRow] = []
     for index, point in enumerate(points):
-        point_config = _config_for_point(base_config, point)
+        point_config = config_for_point(base_config, point)
         gpu_sampler = make_gpu_sampler() if make_gpu_sampler is not None else None
         async with make_backend() as backend:
             benchmark_result = await run_benchmark(
