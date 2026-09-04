@@ -4,12 +4,21 @@ from __future__ import annotations
 
 import math
 from enum import StrEnum
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializationInfo,
+    SerializerFunctionWrapHandler,
+    model_serializer,
+    model_validator,
+)
 
 
 class StrictModel(BaseModel):
@@ -64,6 +73,14 @@ class ClipSource(StrEnum):
     LEARNED = "learned"
 
 
+class AdaptiveClipSignal(StrEnum):
+    """Signals accepted by the adaptive output-cap configuration."""
+
+    QUEUE_DEPTH_EWMA = "queue_depth_ewma"
+    IN_SYSTEM = "in_system"
+    RHO_HAT = "rho_hat"
+
+
 class BackendConfig(StrictModel):
     """Connection settings for the vLLM OpenAI-compatible backend."""
 
@@ -110,6 +127,14 @@ class AdmissionControlConfig(StrictModel):
     clip_max_tokens: int = Field(default=2048, ge=1)
     clip_source: ClipSource = ClipSource.ADVERTISED
     clip_estimator_path: str | None = None
+    adaptive_clip_enabled: bool = False
+    adaptive_clip_signal: AdaptiveClipSignal = AdaptiveClipSignal.QUEUE_DEPTH_EWMA
+    adaptive_clip_caps: tuple[int, ...] = (1536, 1024, 512)
+    adaptive_clip_tighten_thresholds: tuple[float, ...] = (1.0, 2.0, 3.0)
+    adaptive_clip_relax_thresholds: tuple[float, ...] = (0.25, 0.75, 1.5)
+    adaptive_clip_ewma_tau_s: float = Field(default=6.0, gt=0, allow_inf_nan=False)
+    adaptive_clip_relax_hold_s: float = Field(default=30.0, ge=0, allow_inf_nan=False)
+    adaptive_clip_capacity_rps: float | None = Field(default=None, gt=0, allow_inf_nan=False)
 
     @model_validator(mode="after")
     def learned_clip_source_has_estimator(self) -> AdmissionControlConfig:
@@ -121,6 +146,82 @@ class AdmissionControlConfig(StrictModel):
         ):
             raise ValueError("learned clip source requires clip_estimator_path")
         return self
+
+    @model_validator(mode="after")
+    def validate_adaptive_clip_contract(self) -> AdmissionControlConfig:
+        """Validate the finite four-level cap-controller configuration."""
+        caps = self.adaptive_clip_caps
+        tighten = self.adaptive_clip_tighten_thresholds
+        relax = self.adaptive_clip_relax_thresholds
+        if len(caps) != 3:
+            raise ValueError("adaptive_clip_caps must contain exactly 3 values for L1-L3")
+        if any(cap <= 0 for cap in caps):
+            raise ValueError("adaptive_clip_caps must contain only positive values")
+        if any(left <= right for left, right in pairwise(caps)):
+            raise ValueError("adaptive_clip_caps must be strictly decreasing")
+        if min(caps) < 512:
+            raise ValueError("minimum adaptive clip cap must be at least 512 tokens")
+
+        if len(tighten) != 3:
+            raise ValueError(
+                "adaptive_clip_tighten_thresholds must contain exactly 3 values for L1-L3"
+            )
+        if any(not math.isfinite(value) or value < 0.0 for value in tighten):
+            raise ValueError(
+                "adaptive_clip_tighten_thresholds must contain finite non-negative values"
+            )
+        if any(left >= right for left, right in pairwise(tighten)):
+            raise ValueError("adaptive_clip_tighten_thresholds must be strictly increasing")
+
+        if len(relax) != 3:
+            raise ValueError(
+                "adaptive_clip_relax_thresholds must contain exactly 3 values for L1-L3"
+            )
+        if any(not math.isfinite(value) or value < 0.0 for value in relax):
+            raise ValueError(
+                "adaptive_clip_relax_thresholds must contain finite non-negative values"
+            )
+        if any(left >= right for left, right in pairwise(relax)):
+            raise ValueError("adaptive_clip_relax_thresholds must be strictly increasing")
+        if any(
+            relax_value >= tighten_value
+            for relax_value, tighten_value in zip(relax, tighten, strict=True)
+        ):
+            raise ValueError(
+                "each adaptive clip relax threshold must be below its tighten threshold"
+            )
+
+        if self.adaptive_clip_enabled and not self.clip_enabled:
+            raise ValueError("adaptive clipping requires clip_enabled=true")
+        if (
+            self.adaptive_clip_enabled
+            and self.adaptive_clip_signal is AdaptiveClipSignal.RHO_HAT
+            and self.adaptive_clip_capacity_rps is None
+        ):
+            raise ValueError("rho_hat adaptive clipping requires adaptive_clip_capacity_rps")
+        return self
+
+    @model_serializer(mode="wrap")
+    def serialize_with_legacy_hash_projection(
+        self,
+        handler: SerializerFunctionWrapHandler,
+        info: SerializationInfo,
+    ) -> dict[str, object]:
+        """Omit dormant adaptive defaults from the JSON used by legacy config hashes."""
+        serialized: dict[str, object] = handler(self)
+        if info.mode == "json" and not self.adaptive_clip_enabled:
+            for field_name in (
+                "adaptive_clip_enabled",
+                "adaptive_clip_signal",
+                "adaptive_clip_caps",
+                "adaptive_clip_tighten_thresholds",
+                "adaptive_clip_relax_thresholds",
+                "adaptive_clip_ewma_tau_s",
+                "adaptive_clip_relax_hold_s",
+                "adaptive_clip_capacity_rps",
+            ):
+                serialized.pop(field_name, None)
+        return serialized
 
 
 class SloAwareConfig(StrictModel):

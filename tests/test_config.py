@@ -8,6 +8,7 @@ import yaml
 from pydantic import ValidationError
 
 from sloserve.config import (
+    AdaptiveClipSignal,
     AdmissionControlConfig,
     BackendConfig,
     ExperimentConfig,
@@ -18,6 +19,7 @@ from sloserve.config import (
     TokenRangeConfig,
     load_config,
 )
+from sloserve.metrics.config_hash import experiment_config_hash
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -42,6 +44,14 @@ def test_base_config_loads() -> None:
     assert config.slo_aware.length_source is LengthSource.TRUE
     assert config.slo_aware.length_estimator_path is None
     assert config.admission == AdmissionControlConfig()
+    assert config.admission.adaptive_clip_enabled is False
+    assert config.admission.adaptive_clip_signal is AdaptiveClipSignal.QUEUE_DEPTH_EWMA
+    assert config.admission.adaptive_clip_caps == (1536, 1024, 512)
+    assert config.admission.adaptive_clip_tighten_thresholds == (1.0, 2.0, 3.0)
+    assert config.admission.adaptive_clip_relax_thresholds == (0.25, 0.75, 1.5)
+    assert config.admission.adaptive_clip_ewma_tau_s == 6.0
+    assert config.admission.adaptive_clip_relax_hold_s == 30.0
+    assert config.admission.adaptive_clip_capacity_rps is None
     assert config.workload.length_model is LengthModel.UNIFORM_CAP
     assert config.workload.realistic_length is None
 
@@ -189,3 +199,118 @@ def test_enabled_learned_clipping_requires_its_own_estimator_path() -> None:
     raw["admission"]["clip_enabled"] = False
     config = ExperimentConfig.model_validate(raw)
     assert config.admission.clip_enabled is False
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value", "message"),
+    [
+        ("adaptive_clip_caps", [1536, 1024], "exactly 3 values"),
+        ("adaptive_clip_caps", [1536, 0, -1], "only positive values"),
+        ("adaptive_clip_caps", [1536, 1536, 512], "strictly decreasing"),
+        ("adaptive_clip_caps", [1536, 1024, 511], "at least 512"),
+        ("adaptive_clip_tighten_thresholds", [1.0, 2.0], "exactly 3 values"),
+        (
+            "adaptive_clip_tighten_thresholds",
+            [1.0, float("nan"), 3.0],
+            "finite non-negative",
+        ),
+        ("adaptive_clip_tighten_thresholds", [-1.0, 2.0, 3.0], "finite non-negative"),
+        ("adaptive_clip_tighten_thresholds", [1.0, 1.0, 3.0], "strictly increasing"),
+        ("adaptive_clip_relax_thresholds", [0.25, 0.75], "exactly 3 values"),
+        (
+            "adaptive_clip_relax_thresholds",
+            [0.25, 0.75, float("inf")],
+            "finite non-negative",
+        ),
+        ("adaptive_clip_relax_thresholds", [-0.1, 0.75, 1.5], "finite non-negative"),
+        ("adaptive_clip_relax_thresholds", [0.25, 0.25, 1.5], "strictly increasing"),
+        ("adaptive_clip_relax_thresholds", [0.25, 0.75, 3.0], "below its tighten"),
+        ("adaptive_clip_ewma_tau_s", 0.0, "greater than 0"),
+        ("adaptive_clip_ewma_tau_s", float("inf"), "finite number"),
+        ("adaptive_clip_relax_hold_s", -1.0, "greater than or equal to 0"),
+        ("adaptive_clip_relax_hold_s", float("inf"), "finite number"),
+        ("adaptive_clip_capacity_rps", 0.0, "greater than 0"),
+    ],
+)
+def test_adaptive_clip_configuration_rejects_invalid_values(
+    field_name: str, value: object, message: str
+) -> None:
+    raw = _base_config_dict()
+    raw["admission"][field_name] = value
+
+    with pytest.raises(ValidationError, match=message):
+        ExperimentConfig.model_validate(raw)
+
+
+def test_adaptive_clipping_requires_fixed_clipping_to_be_enabled() -> None:
+    raw = _base_config_dict()
+    raw["admission"]["adaptive_clip_enabled"] = True
+
+    with pytest.raises(ValidationError, match="requires clip_enabled=true"):
+        ExperimentConfig.model_validate(raw)
+
+
+def test_enabled_rho_hat_requires_positive_capacity() -> None:
+    raw = _base_config_dict()
+    raw["admission"].update(
+        {
+            "clip_enabled": True,
+            "adaptive_clip_enabled": True,
+            "adaptive_clip_signal": "rho_hat",
+        }
+    )
+
+    with pytest.raises(ValidationError, match="requires adaptive_clip_capacity_rps"):
+        ExperimentConfig.model_validate(raw)
+
+    raw["admission"]["adaptive_clip_capacity_rps"] = 0.23
+    config = ExperimentConfig.model_validate(raw)
+    assert config.admission.adaptive_clip_capacity_rps == 0.23
+
+
+def test_disabled_adaptive_defaults_preserve_legacy_config_hash() -> None:
+    config = load_config(PROJECT_ROOT / "configs" / "base.yaml")
+
+    assert experiment_config_hash(config) == (
+        "520091cbcb2669534c962b25c86c8f6fd23e7cd1e3191f7afe36a672b53201a6"
+    )
+    json_admission = config.admission.model_dump(mode="json")
+    assert set(json_admission) == {
+        "clip_enabled",
+        "clip_max_tokens",
+        "clip_source",
+        "clip_estimator_path",
+    }
+    assert "adaptive_clip_enabled" in config.admission.model_dump()
+
+    dormant_admission = AdmissionControlConfig.model_validate(
+        {
+            **config.admission.model_dump(),
+            "adaptive_clip_caps": [2048, 1536, 512],
+            "adaptive_clip_tighten_thresholds": [2.0, 3.0, 4.0],
+            "adaptive_clip_relax_thresholds": [0.5, 1.5, 2.5],
+            "adaptive_clip_ewma_tau_s": 12.0,
+            "adaptive_clip_relax_hold_s": 45.0,
+        }
+    )
+    dormant = ExperimentConfig.model_validate(
+        {**config.model_dump(), "admission": dormant_admission.model_dump()}
+    )
+    assert experiment_config_hash(dormant) == experiment_config_hash(config)
+
+
+def test_enabled_adaptive_configuration_is_included_in_config_hash() -> None:
+    config = load_config(PROJECT_ROOT / "configs" / "base.yaml")
+    enabled_admission = AdmissionControlConfig.model_validate(
+        {
+            **config.admission.model_dump(),
+            "clip_enabled": True,
+            "adaptive_clip_enabled": True,
+        }
+    )
+    enabled = ExperimentConfig.model_validate(
+        {**config.model_dump(), "admission": enabled_admission.model_dump()}
+    )
+
+    assert experiment_config_hash(enabled) != experiment_config_hash(config)
+    assert enabled.admission.model_dump(mode="json")["adaptive_clip_enabled"] is True

@@ -32,6 +32,16 @@ admission:
   clip_max_tokens: 2048
   clip_source: advertised
   clip_estimator_path: null
+  # Adaptive clipping is inert by default. Its queue-depth defaults are calibrated
+  # for the Week 7 design but are excluded from the legacy hash while disabled.
+  adaptive_clip_enabled: false
+  adaptive_clip_signal: queue_depth_ewma
+  adaptive_clip_caps: [1536, 1024, 512]
+  adaptive_clip_tighten_thresholds: [1.0, 2.0, 3.0]
+  adaptive_clip_relax_thresholds: [0.25, 0.75, 1.5]
+  adaptive_clip_ewma_tau_s: 6.0
+  adaptive_clip_relax_hold_s: 30.0
+  adaptive_clip_capacity_rps: null
 
 slo_aware:
   # Coarse service-time estimates; normalization makes scoring robust to exact values.
