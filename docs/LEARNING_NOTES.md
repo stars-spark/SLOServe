@@ -1356,3 +1356,51 @@ applied；稳定深度 `Q>=1`/`Q>=2` 虽只占 1.7148%/0.6154% 墙钟，Poisson 
 
 完成全量 pytest、Ruff、lock、golden 字节 parity 与 legacy hash 明示核对后，再进入后续 expL CPU
 分析批次；本步骤不启动 vLLM，也不产生真机性能结论。
+
+## 2026-09-04 — Week 7 评审修订：tighten hold 默认值与正式 fast 对照
+
+### 要解决的问题与为什么需要
+
+`tighten-hold-sensitivity.json` 表明旧 `8.0s` 默认并未换来比 `2.0s` 更好的低负载纯净度：两者在
+`rps=0.08` 都是零截断、零非 L0，但高负载截断动作分别为 3 与 12 次。无 hold 时低负载已有 6 次
+截断，说明迟滞不能删除；hold 达 12/16 秒时虽进入非 L0，却一次都截不到，说明过度保守会制造空
+结果。因此需要把默认值改到 4 秒，并把 2 秒 fast 配置保留为真机正式对照，而不是让 CPU 模拟替代
+最终延迟—效用判断。
+
+### 关键代码、数据与命令
+
+- `AdmissionControlConfig` 与 `configs/base.yaml` 的默认 `adaptive_clip_tighten_hold_s` 从 8.0 改为
+  4.0；默认断言及连续 hold 控制器测试同步到 4 秒。
+- `docs/DESIGN_expL_adaptive_cap.md` 冻结 6 个高负载 arm；`adaptive-q-fast` 除 2 秒 hold 外与
+  `adaptive-q-default` 完全相同，其余 adaptive arm 的 tighten hold 同步为 4 秒。低负载仍只保留
+  no-clip 与 default。
+- 使用 `scripts/probe_week7_lowload_depth.py` 分别运行 `--rps 0.08` 与 `--rps 0.17`，结果写入新文件
+  `probe-default-hold-4s.json` 和 `highload-default-hold-4s.json`；三份历史文件未覆盖。
+- 验收命令为 `uv run pytest`、`uv run ruff check .`、`uv run ruff format --check .`、
+  `uv lock --check`，并对两组 parity fixture 运行 `cmp`/`sha256sum`、重新计算 base config hash。
+  受限环境中的用户级 uv 缓存为只读，首次聚焦检查在创建缓存锁时失败；设置
+  `UV_CACHE_DIR=/tmp/sloserve-uv-cache` 后相同命令正常执行。这是缓存路径问题，未放宽任何测试。
+
+### 成功信号、失败诊断与实际结果
+
+- 新默认 4 秒的低负载 CPU 模拟：总墙钟 2556.522826 秒，稳定深度峰值 2，非 L0 时间/比例/进入数
+  均为 0，最紧档 L0，clip 0 次，`OutputClipper` 条件命中 0 次。
+- 新默认 4 秒的高负载 CPU 模拟：总墙钟 1318.337053 秒，稳定深度峰值 5，非 L0 时间
+  98.837032 秒（7.497099%），进入非 L0 6 次，最紧档 L2，clip 9 次，条件命中 9 次；L1/L2/L3
+  驻留分别为 12.455784/86.381247/0 秒。
+- 以上均是用 expK-B no-clip 拟合 `S=0.01494*n+0.0156`、R²=0.9998 的确定性 CPU 模拟，不是真机
+  测量。fast 臂不进低负载正式矩阵，所以它的低负载纯净度只有 CPU 证据，必须在结论中保留该边界。
+- 正式矩阵为高负载 6 arm × 3 seed = 18 点、低负载 2 arm × 3 seed = 6 点，共 24 点。纯运行预算
+  222–240 分钟；按既有冷却/启动折算再加约 82.8 分钟，总预算约 305–323 分钟，预留 5.5 小时且
+  冷却硬门优先。
+- 全量 189 项测试通过；Ruff lint 全绿，82 个文件格式检查通过，lock check 解析 30 个包。
+  no-clip before/after SHA-256 均为 `602afe7e4bf0912ae361065dc442e5a3636130f6d8b121870ca7ea424e8b3dd8`，
+  fixed-512 before/after 均为 `8bf61f2acc97f030cf12d4ad41aafa1dd0facb320e125f46881c5f7fc0229c17`；
+  legacy base config hash 仍为 `520091cbcb2669534c962b25c86c8f6fd23e7cd1e3191f7afe36a672b53201a6`。
+
+### 下一步
+
+后续 Batch 3 实现 sweep 时必须按 24 个唯一 label 装配并测试；真机阶段直接比较 2 秒 fast 与 4 秒
+default。若 fast 高负载明显更优且低负载 CPU 仍为零截断，则报告 4 秒过保守并注明 fast 缺低负载
+真机证据；若优势不明显，则报告该权衡在当前单机规模下不可辨识。本次未启动 vLLM、未使用 GPU、
+未提交代码。

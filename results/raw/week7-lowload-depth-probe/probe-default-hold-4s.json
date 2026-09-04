@@ -1,0 +1,503 @@
+{
+  "aggregate": {
+    "clip_applied_count": 0,
+    "depth_episode_duration_distributions": {
+      "depth_ge_1": {
+        "count": 9,
+        "durations_s": [
+          3.8510138094368926,
+          3.8510138094368926,
+          3.8510138094368926,
+          4.611161240342966,
+          4.611161240342966,
+          4.611161240342966,
+          6.151277717527336,
+          6.151277717527336,
+          6.151277717527336
+        ],
+        "max_s": 6.151277717527336,
+        "p50_s": 4.611161240342966,
+        "p95_s": 6.151277717527336
+      },
+      "depth_ge_2": {
+        "count": 6,
+        "durations_s": [
+          2.5700644691810055,
+          2.5700644691810055,
+          2.5700644691810055,
+          2.674309912161334,
+          2.674309912161334,
+          2.674309912161334
+        ],
+        "max_s": 2.674309912161334,
+        "p50_s": 2.5700644691810055,
+        "p95_s": 2.674309912161334
+      },
+      "depth_ge_3": {
+        "count": 0,
+        "durations_s": [],
+        "max_s": null,
+        "p50_s": null,
+        "p95_s": null
+      }
+    },
+    "first_positive_depth_to_first_tighten_distribution": {
+      "count": 0,
+      "durations_s": [],
+      "max_s": null,
+      "p50_s": null,
+      "p95_s": null
+    },
+    "level_residence": {
+      "L0": {
+        "entry_count": 0,
+        "time_fraction": 1.0,
+        "time_s": 2556.522825918043
+      },
+      "L1": {
+        "entry_count": 0,
+        "time_fraction": 0.0,
+        "time_s": 0.0
+      },
+      "L2": {
+        "entry_count": 0,
+        "time_fraction": 0.0,
+        "time_s": 0.0
+      },
+      "L3": {
+        "entry_count": 0,
+        "time_fraction": 0.0,
+        "time_s": 0.0
+      }
+    },
+    "non_l0_decision_count": 0,
+    "non_l0_entry_count": 0,
+    "non_l0_time_fraction": 0.0,
+    "non_l0_time_s": 0.0,
+    "output_clipper_condition_met_count": 0,
+    "peak_stable_waiting_depth": 2,
+    "stable_depth_time_weighted_distribution": {
+      "0": {
+        "time_fraction": 0.982851567818027,
+        "time_s": 2512.6824676161214
+      },
+      "1": {
+        "time_fraction": 0.010994322003677516,
+        "time_s": 28.107235157894564
+      },
+      "2": {
+        "time_fraction": 0.006154110178295506,
+        "time_s": 15.733123144027019
+      }
+    },
+    "tighten_hold_reset_count": 6,
+    "tightest_level_reached": "L0",
+    "total_time_s": 2556.522825918043
+  },
+  "controller": {
+    "caps": [
+      1536,
+      1024,
+      512
+    ],
+    "clip_source": "learned",
+    "default_source": "Adaptive thresholds, EWMA tau, holds, and caps are inherited from AdmissionControlConfig; the established probe explicitly enables learned clipping.",
+    "ewma_tau_s": 6.0,
+    "relax_hold_s": 30.0,
+    "relax_thresholds": [
+      0.25,
+      0.75,
+      1.5
+    ],
+    "tighten_hold_s": 4.0,
+    "tighten_thresholds": [
+      1.0,
+      2.0,
+      3.0
+    ]
+  },
+  "evidence_scope": "这是基于 expK-B 拟合的确定性CPU模拟; 不是真机测量。 Deterministic CPU simulation using the expK-B no-clip service-time fit; this is not a real-machine measurement and must not be treated as one.",
+  "historical_before_tighten_hold": {
+    "artifact": "results/raw/week7-lowload-depth-probe/probe.json",
+    "controller_semantics": "before tighten-side hold; threshold crossing tightened immediately",
+    "recorded_clip_applied_count": 6,
+    "recorded_non_l0_time_fraction": 0.05115450092213959,
+    "reproduced": {
+      "clip_applied_count": 6,
+      "depth_episode_duration_distributions": {
+        "depth_ge_1": {
+          "count": 9,
+          "durations_s": [
+            3.8510138094368926,
+            3.8510138094368926,
+            3.8510138094368926,
+            4.611161240342966,
+            4.611161240342966,
+            4.611161240342966,
+            6.151277717527336,
+            6.151277717527336,
+            6.151277717527336
+          ],
+          "max_s": 6.151277717527336,
+          "p50_s": 4.611161240342966,
+          "p95_s": 6.151277717527336
+        },
+        "depth_ge_2": {
+          "count": 6,
+          "durations_s": [
+            2.5700644691810055,
+            2.5700644691810055,
+            2.5700644691810055,
+            2.674309912161334,
+            2.674309912161334,
+            2.674309912161334
+          ],
+          "max_s": 2.674309912161334,
+          "p50_s": 2.5700644691810055,
+          "p95_s": 2.674309912161334
+        },
+        "depth_ge_3": {
+          "count": 0,
+          "durations_s": [],
+          "max_s": null,
+          "p50_s": null,
+          "p95_s": null
+        }
+      },
+      "first_positive_depth_to_first_tighten_distribution": {
+        "count": 6,
+        "durations_s": [
+          2.789117717527347,
+          2.789117717527347,
+          2.789117717527347,
+          3.056114345165497,
+          3.056114345165497,
+          3.056114345165497
+        ],
+        "max_s": 3.056114345165497,
+        "p50_s": 2.789117717527347,
+        "p95_s": 3.056114345165497
+      },
+      "level_residence": {
+        "L0": {
+          "entry_count": 0,
+          "time_fraction": 0.9488454990778602,
+          "time_s": 2425.745176662147
+        },
+        "L1": {
+          "entry_count": 6,
+          "time_fraction": 0.05115450092213959,
+          "time_s": 130.77764925589545
+        },
+        "L2": {
+          "entry_count": 0,
+          "time_fraction": 0.0,
+          "time_s": 0.0
+        },
+        "L3": {
+          "entry_count": 0,
+          "time_fraction": 0.0,
+          "time_s": 0.0
+        }
+      },
+      "non_l0_decision_count": 27,
+      "non_l0_entry_count": 6,
+      "non_l0_time_fraction": 0.05115450092213959,
+      "non_l0_time_s": 130.77764925589545,
+      "output_clipper_condition_met_count": 6,
+      "peak_stable_waiting_depth": 2,
+      "stable_depth_time_weighted_distribution": {
+        "0": {
+          "time_fraction": 0.982851567818027,
+          "time_s": 2512.6824676161214
+        },
+        "1": {
+          "time_fraction": 0.010994322003677516,
+          "time_s": 28.107235157894564
+        },
+        "2": {
+          "time_fraction": 0.006154110178295506,
+          "time_s": 15.733123144027019
+        }
+      },
+      "tighten_hold_reset_count": 0,
+      "tightest_level_reached": "L1",
+      "total_time_s": 2556.522825918043
+    },
+    "reproduction_tighten_hold_s": 0.0
+  },
+  "per_seed": [
+    {
+      "clip_applied_count": 0,
+      "depth_episode_duration_distributions": {
+        "depth_ge_1": {
+          "count": 6,
+          "durations_s": [
+            4.611161240342966,
+            4.611161240342966,
+            4.611161240342966,
+            6.151277717527336,
+            6.151277717527336,
+            6.151277717527336
+          ],
+          "max_s": 6.151277717527336,
+          "p50_s": 4.611161240342966,
+          "p95_s": 6.151277717527336
+        },
+        "depth_ge_2": {
+          "count": 3,
+          "durations_s": [
+            2.5700644691810055,
+            2.5700644691810055,
+            2.5700644691810055
+          ],
+          "max_s": 2.5700644691810055,
+          "p50_s": 2.5700644691810055,
+          "p95_s": 2.5700644691810055
+        },
+        "depth_ge_3": {
+          "count": 0,
+          "durations_s": [],
+          "max_s": null,
+          "p50_s": null,
+          "p95_s": null
+        }
+      },
+      "first_positive_depth_to_first_tighten_distribution": {
+        "count": 0,
+        "durations_s": [],
+        "max_s": null,
+        "p50_s": null,
+        "p95_s": null
+      },
+      "level_residence": {
+        "L0": {
+          "entry_count": 0,
+          "time_fraction": 1.0,
+          "time_s": 712.258024345626
+        },
+        "L1": {
+          "entry_count": 0,
+          "time_fraction": 0.0,
+          "time_s": 0.0
+        },
+        "L2": {
+          "entry_count": 0,
+          "time_fraction": 0.0,
+          "time_s": 0.0
+        },
+        "L3": {
+          "entry_count": 0,
+          "time_fraction": 0.0,
+          "time_s": 0.0
+        }
+      },
+      "non_l0_decision_count": 0,
+      "non_l0_entry_count": 0,
+      "non_l0_time_fraction": 0.0,
+      "non_l0_time_s": 0.0,
+      "output_clipper_condition_met_count": 0,
+      "peak_stable_waiting_depth": 2,
+      "seed": 20250825,
+      "stable_depth_time_weighted_distribution": {
+        "0": {
+          "time_fraction": 0.9546690724849689,
+          "time_s": 679.9707074720152
+        },
+        "1": {
+          "time_fraction": 0.034505927102257174,
+          "time_s": 24.57712346606789
+        },
+        "2": {
+          "time_fraction": 0.01082500041277403,
+          "time_s": 7.7101934075430165
+        }
+      },
+      "tighten_hold_reset_count": 3,
+      "tightest_level_reached": "L0",
+      "total_time_s": 712.258024345626
+    },
+    {
+      "clip_applied_count": 0,
+      "depth_episode_duration_distributions": {
+        "depth_ge_1": {
+          "count": 3,
+          "durations_s": [
+            3.8510138094368926,
+            3.8510138094368926,
+            3.8510138094368926
+          ],
+          "max_s": 3.8510138094368926,
+          "p50_s": 3.8510138094368926,
+          "p95_s": 3.8510138094368926
+        },
+        "depth_ge_2": {
+          "count": 3,
+          "durations_s": [
+            2.674309912161334,
+            2.674309912161334,
+            2.674309912161334
+          ],
+          "max_s": 2.674309912161334,
+          "p50_s": 2.674309912161334,
+          "p95_s": 2.674309912161334
+        },
+        "depth_ge_3": {
+          "count": 0,
+          "durations_s": [],
+          "max_s": null,
+          "p50_s": null,
+          "p95_s": null
+        }
+      },
+      "first_positive_depth_to_first_tighten_distribution": {
+        "count": 0,
+        "durations_s": [],
+        "max_s": null,
+        "p50_s": null,
+        "p95_s": null
+      },
+      "level_residence": {
+        "L0": {
+          "entry_count": 0,
+          "time_fraction": 1.0,
+          "time_s": 912.724277649972
+        },
+        "L1": {
+          "entry_count": 0,
+          "time_fraction": 0.0,
+          "time_s": 0.0
+        },
+        "L2": {
+          "entry_count": 0,
+          "time_fraction": 0.0,
+          "time_s": 0.0
+        },
+        "L3": {
+          "entry_count": 0,
+          "time_fraction": 0.0,
+          "time_s": 0.0
+        }
+      },
+      "non_l0_decision_count": 0,
+      "non_l0_entry_count": 0,
+      "non_l0_time_fraction": 0.0,
+      "non_l0_time_s": 0.0,
+      "output_clipper_condition_met_count": 0,
+      "peak_stable_waiting_depth": 2,
+      "seed": 11,
+      "stable_depth_time_weighted_distribution": {
+        "0": {
+          "time_fraction": 0.9873422437517968,
+          "time_s": 901.1712362216613
+        },
+        "1": {
+          "time_fraction": 0.0038676649435860264,
+          "time_s": 3.5301116918266757
+        },
+        "2": {
+          "time_fraction": 0.008790091304617165,
+          "time_s": 8.022929736484002
+        }
+      },
+      "tighten_hold_reset_count": 3,
+      "tightest_level_reached": "L0",
+      "total_time_s": 912.724277649972
+    },
+    {
+      "clip_applied_count": 0,
+      "depth_episode_duration_distributions": {
+        "depth_ge_1": {
+          "count": 0,
+          "durations_s": [],
+          "max_s": null,
+          "p50_s": null,
+          "p95_s": null
+        },
+        "depth_ge_2": {
+          "count": 0,
+          "durations_s": [],
+          "max_s": null,
+          "p50_s": null,
+          "p95_s": null
+        },
+        "depth_ge_3": {
+          "count": 0,
+          "durations_s": [],
+          "max_s": null,
+          "p50_s": null,
+          "p95_s": null
+        }
+      },
+      "first_positive_depth_to_first_tighten_distribution": {
+        "count": 0,
+        "durations_s": [],
+        "max_s": null,
+        "p50_s": null,
+        "p95_s": null
+      },
+      "level_residence": {
+        "L0": {
+          "entry_count": 0,
+          "time_fraction": 1.0,
+          "time_s": 931.5405239224449
+        },
+        "L1": {
+          "entry_count": 0,
+          "time_fraction": 0.0,
+          "time_s": 0.0
+        },
+        "L2": {
+          "entry_count": 0,
+          "time_fraction": 0.0,
+          "time_s": 0.0
+        },
+        "L3": {
+          "entry_count": 0,
+          "time_fraction": 0.0,
+          "time_s": 0.0
+        }
+      },
+      "non_l0_decision_count": 0,
+      "non_l0_entry_count": 0,
+      "non_l0_time_fraction": 0.0,
+      "non_l0_time_s": 0.0,
+      "output_clipper_condition_met_count": 0,
+      "peak_stable_waiting_depth": 0,
+      "seed": 202,
+      "stable_depth_time_weighted_distribution": {
+        "0": {
+          "time_fraction": 1.0,
+          "time_s": 931.5405239224449
+        }
+      },
+      "tighten_hold_reset_count": 0,
+      "tightest_level_reached": "L0",
+      "total_time_s": 931.5405239224449
+    }
+  ],
+  "service_time_model": {
+    "formula": "S_seconds = 0.01494 * output_tokens + 0.0156",
+    "r_squared": 0.9998,
+    "source": "expK-B no-clip fit"
+  },
+  "trace": {
+    "arrival_process": "poisson",
+    "force_exact_output_tokens": true,
+    "length_model": "realistic",
+    "max_in_flight": 4,
+    "repetition_method": "Each repetition regenerates and replays the same seeded request trace, matching run_benchmark semantics.",
+    "repetitions_per_seed": 3,
+    "request_rate_rps": 0.08,
+    "seeds": [
+      20250825,
+      11,
+      202
+    ],
+    "stable_depth_method": "Integrate the post-fill waiting-list length over each event delta; a selected request and all immediately fillable slots are excluded.",
+    "statistics_request_scope": "warmup and formal requests on the controller timeline",
+    "time_weighting_window": "first enqueue through final dispatch",
+    "total_requests": 24,
+    "warmup_requests": 4
+  }
+}

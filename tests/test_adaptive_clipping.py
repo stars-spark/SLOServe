@@ -156,10 +156,10 @@ def test_burst_directly_jumps_from_l0_to_tightest_level() -> None:
 
 def test_tightening_waits_for_continuous_hold_before_direct_jump() -> None:
     clock = FakeClock()
-    controller = _controller(clock, adaptive_clip_tighten_hold_s=8.0)
+    controller = _controller(clock, adaptive_clip_tighten_hold_s=4.0)
 
     started = controller.update(3)
-    clock.advance(7.0)
+    clock.advance(3.0)
     pending = controller.update(3)
     clock.advance(1.0)
     elapsed = controller.update(3)
@@ -176,14 +176,14 @@ def test_tightening_waits_for_continuous_hold_before_direct_jump() -> None:
 
 def test_each_tighter_level_requires_its_own_threshold_hold() -> None:
     clock = FakeClock()
-    controller = _controller(clock, adaptive_clip_tighten_hold_s=8.0)
+    controller = _controller(clock, adaptive_clip_tighten_hold_s=4.0)
 
     controller.update(1)
-    clock.advance(7.0)
+    clock.advance(3.0)
     controller.update(3)
     clock.advance(1.0)
     first_elapsed = controller.update(3)
-    clock.advance(7.0)
+    clock.advance(3.0)
     tightest_elapsed = controller.update(3)
 
     assert first_elapsed.new_level is AdaptiveClipLevel.L1
@@ -193,14 +193,14 @@ def test_each_tighter_level_requires_its_own_threshold_hold() -> None:
 
 def test_tighten_hold_resets_below_threshold_and_restarts_from_zero() -> None:
     clock = FakeClock()
-    controller = _controller(clock, adaptive_clip_tighten_hold_s=8.0)
+    controller = _controller(clock, adaptive_clip_tighten_hold_s=4.0)
 
     controller.update(1)
-    clock.advance(7.0)
+    clock.advance(3.0)
     assert controller.update(1).new_level is AdaptiveClipLevel.L0
     reset = controller.update(0)
     restarted = controller.update(1)
-    clock.advance(7.0)
+    clock.advance(3.0)
     still_l0 = controller.update(1)
     clock.advance(1.0)
     tightened = controller.update(1)
@@ -215,7 +215,7 @@ def test_tighten_hold_resets_below_threshold_and_restarts_from_zero() -> None:
 
 def test_sustained_high_load_tightens_within_hold_plus_one_update_interval() -> None:
     clock = FakeClock()
-    controller = _controller(clock, adaptive_clip_tighten_hold_s=8.0)
+    controller = _controller(clock, adaptive_clip_tighten_hold_s=4.0)
     decisions = [controller.update(3)]
 
     while decisions[-1].new_level is AdaptiveClipLevel.L0:
@@ -223,7 +223,7 @@ def test_sustained_high_load_tightens_within_hold_plus_one_update_interval() -> 
         decisions.append(controller.update(3))
 
     assert decisions[-1].new_level is AdaptiveClipLevel.L3
-    assert decisions[-1].decision_time_s <= 8.0 + 1.0
+    assert decisions[-1].decision_time_s <= 4.0 + 1.0
 
 
 def test_relax_threshold_equality_does_not_start_hold() -> None:

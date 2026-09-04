@@ -50,7 +50,7 @@ def test_base_config_loads() -> None:
     assert config.admission.adaptive_clip_tighten_thresholds == (1.0, 2.0, 3.0)
     assert config.admission.adaptive_clip_relax_thresholds == (0.25, 0.75, 1.5)
     assert config.admission.adaptive_clip_ewma_tau_s == 6.0
-    assert config.admission.adaptive_clip_tighten_hold_s == 8.0
+    assert config.admission.adaptive_clip_tighten_hold_s == 4.0
     assert config.admission.adaptive_clip_relax_hold_s == 30.0
     assert config.admission.adaptive_clip_capacity_rps is None
     assert config.workload.length_model is LengthModel.UNIFORM_CAP

@@ -133,7 +133,7 @@ class AdmissionControlConfig(StrictModel):
     adaptive_clip_tighten_thresholds: tuple[float, ...] = (1.0, 2.0, 3.0)
     adaptive_clip_relax_thresholds: tuple[float, ...] = (0.25, 0.75, 1.5)
     adaptive_clip_ewma_tau_s: float = Field(default=6.0, gt=0, allow_inf_nan=False)
-    adaptive_clip_tighten_hold_s: float = Field(default=8.0, ge=0, allow_inf_nan=False)
+    adaptive_clip_tighten_hold_s: float = Field(default=4.0, ge=0, allow_inf_nan=False)
     adaptive_clip_relax_hold_s: float = Field(default=30.0, ge=0, allow_inf_nan=False)
     adaptive_clip_capacity_rps: float | None = Field(default=None, gt=0, allow_inf_nan=False)
 
